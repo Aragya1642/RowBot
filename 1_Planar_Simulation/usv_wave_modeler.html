@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>USV Sea-Keeper — 1D Wave & Boat Control Modeler</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  :root{
+    --bg:#04121a;
+    --bg2:#071c27;
+    --panel:#0a2431;
+    --panel2:#0d2c3c;
+    --line:rgba(87,214,201,0.10);
+    --line-strong:rgba(87,214,201,0.22);
+    --edge:#123a4c;
+    --signal:#33e6cf;      /* phosphor cyan — primary telemetry */
+    --signal-dim:#1c8f84;
+    --target:#8fb8ff;      /* setpoint / reference */
+    --warn:#ffb454;        /* saturation / stall */
+    --danger:#ff6b6b;
+    --water-a:#0a3547;
+    --water-b:#0f5a63;
+    --crest:#3fe0d2;
+    --hull:#f4f2ea;
+    --hull-line:#cf9a4a;
+    --txt:#dbf3f2;
+    --txt-dim:#7aa6ad;
+    --txt-faint:#4f7880;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --disp:'Space Grotesk',system-ui,sans-serif;
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:
+      radial-gradient(1200px 600px at 70% -10%, #0a2c3a 0%, transparent 60%),
+      var(--bg);
+    color:var(--txt);
+    font-family:var(--disp);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+
+  .wrap{max-width:1440px;margin:0 auto;padding:20px 20px 60px}
+
+  /* ---- header ---- */
+  header{
+    display:flex;align-items:flex-end;justify-content:space-between;
+    gap:20px;flex-wrap:wrap;
+    border-bottom:1px solid var(--edge);
+    padding-bottom:16px;margin-bottom:20px;
+  }
+  .brand{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .brand h1{
+    font-weight:700;font-size:22px;letter-spacing:-0.01em;
+    display:flex;align-items:center;gap:11px;
+  }
+  .brand h1 .dot{
+    width:9px;height:9px;border-radius:50%;background:var(--signal);
+    box-shadow:0 0 14px var(--signal);animation:pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .brand .sub{
+    font-family:var(--mono);font-size:11px;color:var(--txt-dim);
+    letter-spacing:.14em;text-transform:uppercase;
+  }
+  .status-strip{
+    font-family:var(--mono);font-size:11px;color:var(--txt-dim);
+    display:flex;gap:18px;flex-wrap:wrap;letter-spacing:.06em;
+  }
+  .status-strip b{color:var(--signal);font-weight:500}
+
+  /* ---- layout ---- */
+  .grid{display:grid;grid-template-columns:1fr 330px;gap:18px}
+  @media(max-width:960px){.grid{grid-template-columns:1fr}}
+
+  .stack{display:flex;flex-direction:column;gap:18px}
+
+  .card{
+    background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);
+    border:1px solid var(--edge);border-radius:10px;overflow:hidden;
+  }
+  .card-hd{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:11px 15px;border-bottom:1px solid var(--edge);
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--txt-dim);
+  }
+  .card-hd .tag{color:var(--signal);font-weight:500}
+
+  /* ---- scope ---- */
+  .scope-wrap{position:relative;background:#03101800}
+  #scope{display:block;width:100%;height:auto;background:
+    linear-gradient(180deg,#041a24 0%,#05222e 55%,#052029 100%);}
+  .scope-overlay{
+    position:absolute;top:12px;left:15px;pointer-events:none;
+    font-family:var(--mono);font-size:11px;line-height:1.7;
+    color:var(--txt-dim);text-shadow:0 1px 3px #000;
+  }
+  .scope-overlay .k{color:var(--txt-faint)}
+  .scope-overlay .v{color:var(--signal)}
+  .verdict{
+    position:absolute;top:12px;right:15px;pointer-events:none;
+    font-family:var(--mono);font-size:12px;font-weight:700;
+    letter-spacing:.1em;text-transform:uppercase;padding:5px 11px;
+    border-radius:5px;border:1px solid;text-shadow:none;
+  }
+  .verdict.ok{color:var(--signal);border-color:var(--signal-dim);background:rgba(51,230,207,.08)}
+  .verdict.warn{color:var(--warn);border-color:#7a5620;background:rgba(255,180,84,.08)}
+  .verdict.bad{color:var(--danger);border-color:#7a2a2a;background:rgba(255,107,107,.08)}
+
+  /* ---- transport ---- */
+  .transport{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:12px 15px;border-top:1px solid var(--edge);
+  }
+  button.ctrl{
+    font-family:var(--mono);font-size:12px;letter-spacing:.05em;
+    background:var(--panel2);color:var(--txt);border:1px solid var(--edge);
+    padding:8px 14px;border-radius:6px;cursor:pointer;transition:.12s;
+    display:inline-flex;align-items:center;gap:7px;
+  }
+  button.ctrl:hover{border-color:var(--signal-dim);color:var(--signal)}
+  button.ctrl.primary{background:var(--signal);color:#04121a;border-color:var(--signal);font-weight:700}
+  button.ctrl.primary:hover{filter:brightness(1.1)}
+  button.ctrl:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+  .transport .spacer{flex:1}
+  .transport .sim-t{font-family:var(--mono);font-size:12px;color:var(--txt-dim)}
+  .transport .sim-t b{color:var(--txt)}
+
+  .presets{display:flex;gap:7px;flex-wrap:wrap;padding:0 15px 14px}
+  .preset{
+    font-family:var(--mono);font-size:11px;color:var(--txt-dim);
+    background:transparent;border:1px solid var(--edge);border-radius:20px;
+    padding:5px 12px;cursor:pointer;transition:.12s;
+  }
+  .preset:hover{border-color:var(--signal-dim);color:var(--signal)}
+
+  /* ---- telemetry ---- */
+  #telemetry{display:block;width:100%;height:auto}
+
+  /* ---- control bay ---- */
+  .bay{display:flex;flex-direction:column;gap:14px}
+  .section{padding:14px 15px}
+  .section + .section{border-top:1px solid var(--edge)}
+  .section h3{
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--txt-dim);margin-bottom:13px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .section h3 .idx{color:var(--signal);font-weight:700}
+
+  .seg{display:flex;background:var(--bg2);border:1px solid var(--edge);border-radius:7px;padding:3px;gap:3px;margin-bottom:14px}
+  .seg button{
+    flex:1;font-family:var(--mono);font-size:11px;color:var(--txt-dim);
+    background:transparent;border:none;padding:7px 4px;border-radius:5px;cursor:pointer;transition:.12s;
+  }
+  .seg button.active{background:var(--signal);color:#04121a;font-weight:700}
+  .seg button:not(.active):hover{color:var(--signal)}
+
+  .field{margin-bottom:13px}
+  .field:last-child{margin-bottom:0}
+  .field .row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+  .field label{font-size:13px;color:var(--txt)}
+  .field .val{font-family:var(--mono);font-size:12px;color:var(--signal)}
+  .field .unit{color:var(--txt-faint);font-size:11px}
+
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:3px;
+    background:linear-gradient(90deg,var(--signal-dim),var(--edge));outline:none;cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--signal);border:2px solid #04121a;box-shadow:0 0 8px rgba(51,230,207,.5);cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:15px;height:15px;border-radius:50%;background:var(--signal);
+    border:2px solid #04121a;cursor:pointer;
+  }
+  input[type=range]:focus-visible{outline:2px solid var(--signal);outline-offset:4px}
+  .hidden{display:none}
+
+  .toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:9px 11px;background:var(--bg2);border:1px solid var(--edge);border-radius:7px;margin-bottom:13px;cursor:pointer}
+  .toggle .t-txt{font-size:12.5px}
+  .toggle .t-txt small{display:block;color:var(--txt-faint);font-size:10.5px;font-family:var(--mono);margin-top:2px}
+  .switch{width:38px;height:21px;border-radius:12px;background:var(--edge);position:relative;transition:.16s;flex-shrink:0}
+  .switch::after{content:'';position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:var(--txt-dim);transition:.16s}
+  .toggle.on .switch{background:var(--signal)}
+  .toggle.on .switch::after{left:19px;background:#04121a}
+
+  .note{font-family:var(--mono);font-size:10.5px;color:var(--txt-faint);line-height:1.6;margin-top:4px}
+
+  /* ---- metrics ---- */
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--edge)}
+  .metric{background:var(--panel2);padding:11px 13px}
+  .metric .m-k{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--txt-faint)}
+  .metric .m-v{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--txt);margin-top:3px}
+  .metric .m-v small{font-size:11px;font-weight:400;color:var(--txt-dim)}
+  .metric.hl .m-v{color:var(--signal)}
+  .metric.warn .m-v{color:var(--warn)}
+
+  footer{margin-top:26px;font-family:var(--mono);font-size:11px;color:var(--txt-faint);line-height:1.7;
+    border-top:1px solid var(--edge);padding-top:14px}
+  footer b{color:var(--txt-dim);font-weight:500}
+  .eq{color:var(--signal-dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1><span class="dot"></span>USV Sea-Keeper</h1>
+      <span class="sub">1D wave · surge dynamics · closed-loop control bench</span>
+    </div>
+    <div class="status-strip">
+      <span>MODE <b id="st-mode">PID · SPEED</b></span>
+      <span>SEA <b id="st-sea">REGULAR</b></span>
+      <span>Fmax <b id="st-fmax">500 N</b></span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- LEFT: scope + telemetry -->
+    <div class="stack">
+      <div class="card">
+        <div class="card-hd"><span>Waterline Scope</span><span class="tag" id="scope-tag">◉ LIVE</span></div>
+        <div class="scope-wrap">
+          <canvas id="scope" width="1000" height="440"></canvas>
+          <div class="scope-overlay">
+            <div><span class="k">SLOPE </span><span class="v" id="ov-slope">0.00</span></div>
+            <div><span class="k">PITCH </span><span class="v" id="ov-pitch">0.0°</span></div>
+            <div><span class="k">SPEED </span><span class="v" id="ov-speed">0.00 m/s</span></div>
+          </div>
+          <div class="verdict ok" id="verdict">HOLDING</div>
+        </div>
+        <div class="transport">
+          <button class="ctrl primary" id="btn-play">▶ Run</button>
+          <button class="ctrl" id="btn-reset">↺ Reset</button>
+          <div class="spacer"></div>
+          <span class="sim-t">t = <b id="sim-time">0.0</b> s &nbsp;·&nbsp; ×<b id="sim-speed">1.0</b></span>
+          <button class="ctrl" id="btn-slow">◐ ½×</button>
+          <button class="ctrl" id="btn-fast">◑ 2×</button>
+        </div>
+        <div class="presets">
+          <span style="font-family:var(--mono);font-size:11px;color:var(--txt-faint);align-self:center;margin-right:4px">SCENARIO:</span>
+          <button class="preset" data-preset="harbor">Calm harbor</button>
+          <button class="preset" data-preset="chop">Coastal chop</button>
+          <button class="preset" data-preset="storm">Storm / head sea</button>
+          <button class="preset" data-preset="station">Station-keep</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><span>Telemetry</span><span class="tag">20 s window</span></div>
+        <canvas id="telemetry" width="1000" height="420"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><span>Readout</span><span class="tag" id="rd-tag">—</span></div>
+        <div class="metrics" id="metrics"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: control bay -->
+    <div class="card bay-card">
+      <div class="card-hd"><span>Control Bay</span><span class="tag">◇ tune live</span></div>
+      <div class="bay">
+
+        <!-- SEA STATE -->
+        <div class="section">
+          <h3><span class="idx">01</span> Sea state</h3>
+          <div class="seg" id="seg-sea">
+            <button data-sea="regular" class="active">Regular</button>
+            <button data-sea="irregular">Irregular (JONSWAP)</button>
+          </div>
+
+          <div id="sea-regular">
+            <div class="field">
+              <div class="row"><label>Wave amplitude</label><span class="val"><span id="v-amp">0.50</span> <span class="unit">m</span></span></div>
+              <input type="range" id="amp" min="0" max="2" step="0.05" value="0.5">
+            </div>
+            <div class="field">
+              <div class="row"><label>Wave period</label><span class="val"><span id="v-per">4.0</span> <span class="unit">s</span></span></div>
+              <input type="range" id="per" min="2" max="12" step="0.1" value="4">
+            </div>
+            <p class="note" id="reg-derived">λ ≈ 25.0 m · c ≈ 6.24 m/s · max slope ≈ 0.126</p>
+          </div>
+
+          <div id="sea-irregular" class="hidden">
+            <div class="field">
+              <div class="row"><label>Significant height Hₛ</label><span class="val"><span id="v-hs">1.20</span> <span class="unit">m</span></span></div>
+              <input type="range" id="hs" min="0.2" max="5" step="0.1" value="1.2">
+            </div>
+            <div class="field">
+              <div class="row"><label>Peak period Tₚ</label><span class="val"><span id="v-tp">6.0</span> <span class="unit">s</span></span></div>
+              <input type="range" id="tp" min="3" max="15" step="0.2" value="6">
+            </div>
+            <button class="ctrl" id="btn-reseed" style="width:100%;justify-content:center">⟳ New random sea</button>
+          </div>
+        </div>
+
+        <!-- VESSEL -->
+        <div class="section">
+          <h3><span class="idx">02</span> Vessel</h3>
+          <div class="field">
+            <div class="row"><label>Mass</label><span class="val"><span id="v-mass">350</span> <span class="unit">kg</span></span></div>
+            <input type="range" id="mass" min="80" max="1500" step="10" value="350">
+          </div>
+          <div class="field">
+            <div class="row"><label>Max thrust ±Fₘₐₓ</label><span class="val"><span id="v-fmax">500</span> <span class="unit">N</span></span></div>
+            <input type="range" id="fmax" min="50" max="2500" step="10" value="500">
+          </div>
+          <div class="field">
+            <div class="row"><label>Drag coefficient</label><span class="val"><span id="v-drag">40</span> <span class="unit">N·s²/m²</span></span></div>
+            <input type="range" id="drag" min="2" max="200" step="1" value="40">
+          </div>
+          <div class="field">
+            <div class="row"><label>Thruster slew rate</label><span class="val"><span id="v-slew">2000</span> <span class="unit">N/s</span></span></div>
+            <input type="range" id="slew" min="100" max="8000" step="100" value="2000">
+          </div>
+          <div class="toggle on" id="tg-morison">
+            <div class="t-txt">Wave orbital coupling<small>Morison drift + inertia forces</small></div>
+            <div class="switch"></div>
+          </div>
+        </div>
+
+        <!-- CONTROLLER -->
+        <div class="section">
+          <h3><span class="idx">03</span> Controller</h3>
+          <div class="seg" id="seg-mode">
+            <button data-mode="manual">Manual</button>
+            <button data-mode="speed" class="active">Hold speed</button>
+            <button data-mode="position">Reach point</button>
+          </div>
+
+          <!-- manual -->
+          <div id="ctl-manual" class="hidden">
+            <div class="field">
+              <div class="row"><label>Thrust command</label><span class="val"><span id="v-manual">0</span> <span class="unit">%</span></span></div>
+              <input type="range" id="manual" min="-100" max="100" step="1" value="0">
+            </div>
+            <p class="note">Open loop. You are the controller — drive the slider and watch it stall on the crests.</p>
+          </div>
+
+          <!-- speed -->
+          <div id="ctl-speed">
+            <div class="field">
+              <div class="row"><label>Target speed</label><span class="val"><span id="v-vref">2.0</span> <span class="unit">m/s</span></span></div>
+              <input type="range" id="vref" min="0" max="6" step="0.1" value="2">
+            </div>
+          </div>
+
+          <!-- position -->
+          <div id="ctl-position" class="hidden">
+            <div class="field">
+              <div class="row"><label>Target distance</label><span class="val"><span id="v-xref">60</span> <span class="unit">m</span></span></div>
+              <input type="range" id="xref" min="10" max="200" step="5" value="60">
+            </div>
+          </div>
+
+          <!-- PID gains (shared by speed+position) -->
+          <div id="pid-gains">
+            <div class="field">
+              <div class="row"><label>K<sub>p</sub> proportional</label><span class="val" id="v-kp">200</span></div>
+              <input type="range" id="kp" min="0" max="1200" step="5" value="200">
+            </div>
+            <div class="field">
+              <div class="row"><label>K<sub>i</sub> integral</label><span class="val" id="v-ki">40</span></div>
+              <input type="range" id="ki" min="0" max="400" step="2" value="40">
+            </div>
+            <div class="field">
+              <div class="row"><label>K<sub>d</sub> derivative</label><span class="val" id="v-kd">20</span></div>
+              <input type="range" id="kd" min="0" max="400" step="2" value="20">
+            </div>
+            <div class="toggle" id="tg-ff">
+              <div class="t-txt">Slope feedforward<small>cancel m·g·sinθ disturbance</small></div>
+              <div class="switch"></div>
+            </div>
+            <p class="note">Feedforward pre-empts the gravity load of each crest so the PID only has to clean up the residual — the single biggest win for wave-climbing.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <b>Model.</b> Surge coordinate x, boat rides the surface (z = η, pitch = arctan ∂η/∂x).
+    <span class="eq">(m+mₐ)v̇ = F_thrust − ½C_d(v−u)|v−u| − m·g·sinθ·cosθ + F_wave</span>.
+    Waves use deep-water dispersion <span class="eq">ω²=gk</span>; irregular seas are a JONSWAP spectrum (γ=3.3). Gravity along the wave slope is the load your controller must beat — when a crest's slope demands more than ±Fₘₐₓ, no gain tuning saves you and the vessel stalls. That's the actuator-sizing lesson built into the bench.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const G = 9.81, RHO = 1025;
+
+/* ======================= STATE ======================= */
+const P = {
+  sea:'regular',
+  amp:0.5, per:4.0,
+  hs:1.2, tp:6.0, seed:1,
+  mass:350, fmax:500, drag:40, slew:2000, morison:true,
+  mode:'speed', manual:0, vref:2.0, xref:60,
+  kp:200, ki:40, kd:20, ff:false,
+  timeScale:1
+};
+
+const S = {
+  running:false, t:0,
+  x:0, v:0,            // surge position & velocity
+  thrust:0,            // actual thrust (after slew)
+  integ:0, prevErr:0,  // PID memory
+  distance:0, effort:0, // accumulators
+  errSq:0, errN:0,
+  crests:0, lastSlope:0,
+  reached:false, reachedT:0,
+  camX:0
+};
+
+let comps = []; // irregular wave components {A,w,k,phi}
+
+/* ======================= WAVE FIELD ======================= */
+function rng(seed){ // small deterministic PRNG
+  let s = seed>>>0 || 1;
+  return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+}
+
+function buildIrregular(){
+  const N=26, wp=2*Math.PI/P.tp;
+  const wmin=0.35*wp, wmax=3.0*wp, dw=(wmax-wmin)/N;
+  const rand=rng(P.seed*2654435761);
+  const raw=[];
+  let m0=0;
+  for(let i=0;i<N;i++){
+    const w=wmin+(i+0.5)*dw;
+    const sig = w<=wp?0.07:0.09;
+    const r = Math.exp(-((w-wp)**2)/(2*sig*sig*wp*wp));
+    // JONSWAP shape (unnormalised — scaled to Hs below)
+    let Sw = (wp**4)/(w**5) * Math.exp(-1.25*(wp/w)**4) * Math.pow(3.3, r);
+    raw.push({w,Sw});
+    m0 += Sw*dw;
+  }
+  // scale so 4*sqrt(Σ S dw) == Hs
+  const scale = (P.hs*P.hs)/(16*m0); // S_scaled = Sw*scale -> m0_scaled=Hs^2/16
+  comps = raw.map(o=>{
+    const A = Math.sqrt(2*o.Sw*scale*dw);
+    return {A, w:o.w, k:o.w*o.w/G, phi:rand()*2*Math.PI};
+  });
+}
+
+function elevation(x,t){
+  if(P.sea==='regular'){
+    const w=2*Math.PI/P.per, k=w*w/G;
+    return P.amp*Math.cos(k*x-w*t);
+  }
+  let e=0; for(const c of comps) e+=c.A*Math.cos(c.k*x-c.w*t+c.phi); return e;
+}
+function slopeAt(x,t){
+  if(P.sea==='regular'){
+    const w=2*Math.PI/P.per, k=w*w/G;
+    return -P.amp*k*Math.sin(k*x-w*t);
+  }
+  let s=0; for(const c of comps) s+=-c.A*c.k*Math.sin(c.k*x-c.w*t+c.phi); return s;
+}
+function orbitalU(x,t){ // horizontal orbital velocity at surface (deep water)
+  if(P.sea==='regular'){
+    const w=2*Math.PI/P.per, k=w*w/G;
+    return P.amp*w*Math.cos(k*x-w*t);
+  }
+  let u=0; for(const c of comps) u+=c.A*c.w*Math.cos(c.k*x-c.w*t+c.phi); return u;
+}
+function orbitalUdot(x,t){
+  if(P.sea==='regular'){
+    const w=2*Math.PI/P.per, k=w*w/G;
+    return P.amp*w*w*Math.sin(k*x-w*t);
+  }
+  let a=0; for(const c of comps) a+=c.A*c.w*c.w*Math.sin(c.k*x-c.w*t+c.phi); return a;
+}
+
+/* ======================= CONTROLLER ======================= */
+function computeCommand(dt){
+  if(P.mode==='manual') return (P.manual/100)*P.fmax;
+
+  const slope=slopeAt(S.x,S.t);
+  const theta=Math.atan(slope);
+  const gravLoad = P.mass*G*Math.sin(theta)*Math.cos(theta); // horizontal grav component
+
+  let err, dErr;
+  if(P.mode==='speed'){
+    err = P.vref - S.v;
+  } else { // position
+    err = P.xref - S.x;
+  }
+
+  // integral with conditional anti-windup handled after saturation
+  const rawI = S.integ + err*dt;
+  dErr = (err - S.prevErr)/Math.max(dt,1e-6);
+  S.prevErr = err;
+
+  let u = P.kp*err + P.ki*rawI + P.kd*dErr;
+  if(P.ff) u += gravLoad; // feedforward cancels the slope load
+
+  // saturate; only accumulate integral if not pushing further into saturation
+  let sat=u;
+  if(sat> P.fmax) sat= P.fmax;
+  if(sat< -P.fmax) sat=-P.fmax;
+  const windup = (u!==sat) && (Math.sign(err)===Math.sign(u));
+  if(!windup) S.integ = rawI;
+
+  return sat;
+}
+
+/* ======================= DYNAMICS ======================= */
+function derivatives(x,v,t){
+  const Ca = 0.15;                       // added-mass factor (surge)
+  const M  = P.mass*(1+Ca);
+  const slope=slopeAt(x,t), theta=Math.atan(slope);
+  const gravX = -P.mass*G*Math.sin(theta)*Math.cos(theta);
+
+  let u=0, ud=0;
+  if(P.morison){ u=orbitalU(x,t); ud=orbitalUdot(x,t); }
+  const vrel = v-u;
+  const fDrag = -P.drag*vrel*Math.abs(vrel);
+  const fInertia = P.morison ? P.mass*Ca*ud : 0; // Froude–Krylov + added-mass excitation (approx)
+
+  const a = (S.thrust + gravX + fDrag + fInertia)/M;
+  return a;
+}
+
+function step(dt){
+  // command + thruster slew limit
+  const cmd = computeCommand(dt);
+  const maxStep = P.slew*dt;
+  let d = cmd - S.thrust;
+  if(d> maxStep) d= maxStep;
+  if(d< -maxStep) d=-maxStep;
+  S.thrust += d;
+
+  // RK4 on velocity, then position (thrust held constant across sub-step)
+  const x=S.x, v=S.v, t=S.t;
+  const k1=derivatives(x,             v,               t);
+  const k2=derivatives(x+0.5*dt*v,    v+0.5*dt*k1,     t+0.5*dt);
+  const k3=derivatives(x+0.5*dt*(v+0.5*dt*k1), v+0.5*dt*k2, t+0.5*dt);
+  const k4=derivatives(x+dt*(v+0.5*dt*k2),     v+dt*k3,     t+dt);
+  const dv=(dt/6)*(k1+2*k2+2*k3+k4);
+  const vMid=v+0.5*dv;
+  S.v = v+dv;
+  S.x = x+ (v+0.5*dv)*dt;
+  S.t = t+dt;
+
+  // accumulators
+  S.distance = S.x;
+  S.effort += Math.abs(S.thrust)*dt;
+  const e = (P.mode==='position')?(P.xref-S.x):(P.vref-S.v);
+  if(P.mode!=='manual'){ S.errSq += e*e; S.errN++; }
+
+  // crest counter (slope sign change + → −  ≈ passing a crest going forward)
+  const sl=slopeAt(S.x,S.t);
+  if(S.lastSlope>0 && sl<=0 && S.v>0.05) S.crests++;
+  S.lastSlope=sl;
+
+  // reached target
+  if(P.mode==='position' && !S.reached && Math.abs(P.xref-S.x)<0.5 && Math.abs(S.v)<0.15){
+    S.reached=true; S.reachedT=S.t;
+  }
+}
+
+/* ======================= TELEMETRY BUFFERS ======================= */
+const WIN=20; // seconds
+const buf = { t:[], v:[], vref:[], thr:[], slope:[], err:[] };
+function pushBuf(){
+  buf.t.push(S.t); buf.v.push(S.v);
+  buf.vref.push(P.mode==='speed'?P.vref:(P.mode==='manual'?null:0));
+  buf.thr.push(S.thrust); buf.slope.push(slopeAt(S.x,S.t));
+  buf.err.push(P.mode==='position'?(P.xref-S.x):null);
+  while(buf.t.length && buf.t[0] < S.t-WIN){
+    for(const k in buf) buf[k].shift();
+  }
+}
+
+/* ======================= RENDER: SCOPE ======================= */
+const scope=document.getElementById('scope'), sx=scope.getContext('2d');
+const tele=document.getElementById('telemetry'), tx=tele.getContext('2d');
+
+function fitCanvas(cv){
+  const ratio=window.devicePixelRatio||1;
+  const w=cv.clientWidth;
+  if(!w) return;
+  const targetH = cv===scope ? Math.round(w*0.44) : Math.round(w*0.42);
+  cv.width=Math.round(w*ratio); cv.height=Math.round(targetH*ratio);
+  cv.style.height=targetH+'px';
+  cv.getContext('2d').setTransform(ratio,0,0,ratio,0,0);
+}
+
+function drawScope(){
+  const W=scope.clientWidth, H=scope.clientHeight;
+  sx.clearRect(0,0,W,H);
+  const ppm = Math.max(10, Math.min(30, W/46));   // px per metre (horizontal & vertical)
+  const boatScreenX = W*0.40;
+  const waterY = H*0.52;
+  S.camX = S.x;                                   // camera follows boat
+
+  const xw = px => S.camX + (px-boatScreenX)/ppm; // screen→world
+  const sxOf = xw => boatScreenX + (xw-S.camX)*ppm;
+  const syOf = zw => waterY - zw*ppm;
+
+  // grid
+  sx.strokeStyle='rgba(87,214,201,0.07)'; sx.lineWidth=1;
+  sx.beginPath();
+  const startM=Math.floor(xw(0)/5)*5;
+  for(let m=startM; m<xw(W)+5; m+=5){ const p=sxOf(m); sx.moveTo(p,0); sx.lineTo(p,H); }
+  for(let gy=0; gy<H; gy+=Math.round(ppm)){ sx.moveTo(0,gy); sx.lineTo(W,gy); }
+  sx.stroke();
+
+  // distance ruler
+  sx.fillStyle='rgba(122,166,173,0.55)'; sx.font='10px "JetBrains Mono",monospace';
+  for(let m=startM; m<xw(W)+5; m+=10){ const p=sxOf(m); if(p>18&&p<W-4) sx.fillText(m+'m',p+3,H-6); }
+
+  // target marker (position mode)
+  if(P.mode==='position'){
+    const p=sxOf(P.xref);
+    sx.strokeStyle='rgba(143,184,255,0.8)'; sx.setLineDash([5,5]); sx.lineWidth=1.5;
+    sx.beginPath(); sx.moveTo(p,0); sx.lineTo(p,H); sx.stroke(); sx.setLineDash([]);
+    sx.fillStyle='#8fb8ff'; sx.font='11px "JetBrains Mono",monospace';
+    sx.fillText('◎ TARGET', p+6, 16);
+  }
+
+  // water surface
+  const surf=[];
+  for(let p=-2;p<=W+2;p+=3){ const w=xw(p); surf.push([p, syOf(elevation(w,S.t))]); }
+  const grad=sx.createLinearGradient(0,waterY-P.amp*ppm-40,0,H);
+  grad.addColorStop(0,'#0f5a63'); grad.addColorStop(0.5,'#0a3547'); grad.addColorStop(1,'#052029');
+  sx.beginPath(); sx.moveTo(-2,H);
+  sx.lineTo(surf[0][0],surf[0][1]);
+  for(const s of surf) sx.lineTo(s[0],s[1]);
+  sx.lineTo(W+2,H); sx.closePath();
+  sx.fillStyle=grad; sx.fill();
+  // crest line
+  sx.beginPath(); sx.moveTo(surf[0][0],surf[0][1]);
+  for(const s of surf) sx.lineTo(s[0],s[1]);
+  sx.strokeStyle='rgba(63,224,210,0.85)'; sx.lineWidth=2; sx.stroke();
+  // subtle glow line under crest
+  sx.strokeStyle='rgba(63,224,210,0.18)'; sx.lineWidth=6; sx.stroke();
+
+  // ---- boat ----
+  const slope=slopeAt(S.x,S.t), pitch=Math.atan(slope);
+  const bz=elevation(S.x,S.t);
+  const bx=boatScreenX, by=syOf(bz);
+  const L=2.6*ppm, Bh=0.85*ppm; // hull length/height in px
+
+  sx.save(); sx.translate(bx,by); sx.rotate(-pitch);
+  // hull (simple planing-hull profile)
+  sx.beginPath();
+  sx.moveTo(-L/2, -Bh*0.15);
+  sx.lineTo(L*0.42, -Bh*0.15);
+  sx.lineTo(L*0.5, -Bh*0.7);
+  sx.lineTo(-L*0.5, -Bh*0.7);
+  sx.closePath();
+  sx.fillStyle='#f4f2ea'; sx.fill();
+  sx.strokeStyle='#cf9a4a'; sx.lineWidth=1.5; sx.stroke();
+  // deck / sensor mast
+  sx.fillStyle='#12303c';
+  sx.fillRect(-L*0.12,-Bh*1.5,L*0.24,Bh*0.85);
+  sx.fillStyle='#33e6cf';
+  sx.fillRect(-1.2,-Bh*2.1,2.4,Bh*0.7);
+  sx.beginPath(); sx.arc(0,-Bh*2.1,2.6,0,7); sx.fillStyle='#33e6cf'; sx.fill();
+  sx.restore();
+
+  // thrust vector (world-horizontal, drawn from stern)
+  const thrN=S.thrust, thrPx=(thrN/P.fmax)*L*1.4;
+  if(Math.abs(thrPx)>1){
+    const sat=Math.abs(S.thrust)>=P.fmax-1;
+    sx.strokeStyle=sat?'#ffb454':'#33e6cf'; sx.fillStyle=sx.strokeStyle; sx.lineWidth=3;
+    const ay=by-Bh*0.4;
+    sx.beginPath(); sx.moveTo(bx,ay); sx.lineTo(bx+thrPx,ay); sx.stroke();
+    const dir=Math.sign(thrPx);
+    sx.beginPath(); sx.moveTo(bx+thrPx,ay);
+    sx.lineTo(bx+thrPx-dir*7,ay-4); sx.lineTo(bx+thrPx-dir*7,ay+4); sx.closePath(); sx.fill();
+  }
+
+  // waterline reference (mean sea level)
+  sx.strokeStyle='rgba(122,166,173,0.25)'; sx.setLineDash([2,6]); sx.lineWidth=1;
+  sx.beginPath(); sx.moveTo(0,waterY); sx.lineTo(W,waterY); sx.stroke(); sx.setLineDash([]);
+}
+
+/* ======================= RENDER: TELEMETRY ======================= */
+function drawTelemetry(){
+  const W=tele.clientWidth, H=tele.clientHeight;
+  tx.clearRect(0,0,W,H);
+  const padL=52, padR=12, gap=14;
+  const nRows=3, rowH=(H-gap*(nRows-1))/nRows;
+  const t1 = S.t, t0=Math.max(0,S.t-WIN);
+  const XX = t => padL + (t-t0)/(WIN)*(W-padL-padR);
+
+  function panel(idx,label,color,series,unit,fixedRange){
+    const top=idx*(rowH+gap);
+    // frame
+    tx.fillStyle='rgba(5,20,26,0.5)'; tx.fillRect(padL,top,W-padL-padR,rowH);
+    tx.strokeStyle='rgba(87,214,201,0.12)'; tx.lineWidth=1; tx.strokeRect(padL,top,W-padL-padR,rowH);
+    // range
+    let mn=Infinity,mx=-Infinity;
+    for(const s of series) for(const val of s.data) if(val!=null){ if(val<mn)mn=val; if(val>mx)mx=val; }
+    if(fixedRange){ mn=fixedRange[0]; mx=fixedRange[1]; }
+    if(!isFinite(mn)){mn=-1;mx=1;}
+    if(mx-mn<1e-6){mx+=1;mn-=1;}
+    const padv=(mx-mn)*0.12; mn-=padv; mx+=padv;
+    const YY=v=> top+rowH-(v-mn)/(mx-mn)*rowH;
+    // zero line
+    if(mn<0&&mx>0){ const zy=YY(0); tx.strokeStyle='rgba(122,166,173,0.25)'; tx.setLineDash([3,4]);
+      tx.beginPath(); tx.moveTo(padL,zy); tx.lineTo(W-padR,zy); tx.stroke(); tx.setLineDash([]); }
+    // label + axis
+    tx.fillStyle='rgba(122,166,173,0.9)'; tx.font='10px "JetBrains Mono",monospace';
+    tx.fillText(label, padL+6, top+13);
+    tx.textAlign='right';
+    tx.fillStyle='rgba(79,120,128,0.9)';
+    tx.fillText(mx.toFixed(1), padL-6, top+10);
+    tx.fillText(mn.toFixed(1), padL-6, top+rowH-3);
+    tx.textAlign='left';
+    // series
+    for(const s of series){
+      tx.strokeStyle=s.color; tx.lineWidth=s.w||1.8; if(s.dash)tx.setLineDash(s.dash);else tx.setLineDash([]);
+      tx.beginPath(); let started=false;
+      for(let i=0;i<buf.t.length;i++){
+        const val=s.data[i]; if(val==null){started=false;continue;}
+        const px=XX(buf.t[i]), py=YY(val);
+        if(!started){tx.moveTo(px,py);started=true;} else tx.lineTo(px,py);
+      }
+      tx.stroke(); tx.setLineDash([]);
+    }
+  }
+
+  panel(0,'SPEED  v (m/s)','#33e6cf',[
+    {data:buf.vref,color:'#8fb8ff',w:1.4,dash:[5,4]},
+    {data:buf.v,color:'#33e6cf',w:2}
+  ]);
+  panel(1,'THRUST  F (N)','#ffb454',[
+    {data:buf.thr,color:'#ffb454',w:2}
+  ],'N',[-P.fmax*1.05,P.fmax*1.05]);
+  if(P.mode==='position'){
+    panel(2,'POSITION ERR (m)','#8fb8ff',[{data:buf.err,color:'#8fb8ff',w:2}]);
+  } else {
+    panel(2,'WAVE SLOPE  ∂η/∂x','#5ad1ff',[{data:buf.slope,color:'#5ad1ff',w:1.8}]);
+  }
+
+  // saturation shading on thrust panel
+  const top=1*(rowH+gap);
+  tx.fillStyle='rgba(255,180,84,0.06)';
+  const satY=top+rowH*0.05; // rough band top
+}
+
+/* ======================= METRICS ======================= */
+function renderMetrics(){
+  const box=document.getElementById('metrics');
+  const rms = S.errN? Math.sqrt(S.errSq/S.errN):0;
+  const satPct = 100*Math.min(1,Math.abs(S.thrust)/P.fmax);
+  const cards=[];
+  cards.push(['Speed',S.v.toFixed(2),'m/s','hl']);
+  cards.push(['Distance',S.x.toFixed(1),'m','']);
+  if(P.mode==='position'){
+    cards.push(['Target err',(P.xref-S.x).toFixed(2),'m', Math.abs(P.xref-S.x)<0.5?'hl':'']);
+    cards.push(['Arrived', S.reached?('t='+S.reachedT.toFixed(1)+'s'):'—','', S.reached?'hl':'']);
+  } else {
+    cards.push(['RMS speed err',rms.toFixed(3),'m/s', rms<0.15?'hl':(rms>0.6?'warn':'')]);
+    cards.push(['Target speed',(P.mode==='speed'?P.vref.toFixed(1):'—'),'m/s','']);
+  }
+  cards.push(['Thrust',S.thrust.toFixed(0),'N', Math.abs(S.thrust)>=P.fmax-1?'warn':'']);
+  cards.push(['Saturation',satPct.toFixed(0),'%', satPct>=99?'warn':'']);
+  cards.push(['Crests cleared',String(S.crests),'','']);
+  cards.push(['Control effort',(S.effort/1000).toFixed(1),'kN·s','']);
+
+  box.innerHTML = cards.map(c=>`
+    <div class="metric ${c[3]}">
+      <div class="m-k">${c[0]}</div>
+      <div class="m-v">${c[1]}<small> ${c[2]}</small></div>
+    </div>`).join('');
+}
+
+/* ======================= VERDICT ======================= */
+function updateVerdict(){
+  const ov=document.getElementById('verdict');
+  const el=id=>document.getElementById(id);
+  el('ov-slope').textContent=slopeAt(S.x,S.t).toFixed(3);
+  el('ov-pitch').textContent=(Math.atan(slopeAt(S.x,S.t))*180/Math.PI).toFixed(1)+'°';
+  el('ov-speed').textContent=S.v.toFixed(2)+' m/s';
+
+  let cls='ok', txt='HOLDING';
+  const sat = Math.abs(S.thrust)>=P.fmax-1;
+  if(P.mode==='manual'){ cls='warn'; txt='OPEN LOOP'; }
+  else if(P.mode==='position'){
+    if(S.reached){cls='ok';txt='ARRIVED';}
+    else if(sat && S.v<0.05){cls='bad';txt='STALLED';}
+    else {cls='warn';txt='TRANSIT';}
+  } else { // speed
+    const err=Math.abs(P.vref-S.v);
+    if(P.vref>0.1 && S.v<0.05 && sat){cls='bad';txt='STALLED — Fmax too low';}
+    else if(err<0.2){cls='ok';txt='ON SETPOINT';}
+    else if(sat){cls='warn';txt='THRUST SATURATED';}
+    else {cls='warn';txt='SETTLING';}
+  }
+  ov.className='verdict '+cls; ov.textContent=txt;
+}
+
+/* ======================= LOOP ======================= */
+let lastFrame=0, acc=0;
+const DT=0.004; // physics sub-step
+function loop(ts){
+  requestAnimationFrame(loop);
+  if(!lastFrame) lastFrame=ts;
+  let frameDt=(ts-lastFrame)/1000; lastFrame=ts;
+  if(frameDt>0.05) frameDt=0.05; // clamp tab-switch jumps
+
+  if(S.running){
+    acc += frameDt*P.timeScale;
+    let guard=0;
+    while(acc>=DT && guard<4000){ step(DT); acc-=DT; guard++; }
+    pushBuf();
+    document.getElementById('sim-time').textContent=S.t.toFixed(1);
+  }
+  drawScope(); drawTelemetry(); renderMetrics(); updateVerdict();
+}
+
+/* ======================= UI WIRING ======================= */
+const $=id=>document.getElementById(id);
+function bindSlider(id,key,disp,fmt){
+  const el=$(id); el.value=P[key];
+  el.addEventListener('input',()=>{
+    P[key]=parseFloat(el.value);
+    if(disp) $(disp).textContent = fmt?fmt(P[key]):P[key];
+    onParamChange();
+  });
+}
+function fmtFixed(n){return v=>v.toFixed(n);}
+
+bindSlider('amp','amp','v-amp',fmtFixed(2));
+bindSlider('per','per','v-per',fmtFixed(1));
+bindSlider('hs','hs','v-hs',fmtFixed(2));
+bindSlider('tp','tp','v-tp',fmtFixed(1));
+bindSlider('mass','mass','v-mass');
+bindSlider('fmax','fmax','v-fmax');
+bindSlider('drag','drag','v-drag');
+bindSlider('slew','slew','v-slew');
+bindSlider('manual','manual','v-manual');
+bindSlider('vref','vref','v-vref',fmtFixed(1));
+bindSlider('xref','xref','v-xref');
+bindSlider('kp','kp','v-kp');
+bindSlider('ki','ki','v-ki');
+bindSlider('kd','kd','v-kd');
+
+function onParamChange(){
+  if(P.sea==='irregular') buildIrregular();
+  // derived regular readout
+  const w=2*Math.PI/P.per, k=w*w/G, lambda=2*Math.PI/k, c=w/k;
+  $('reg-derived').textContent=`λ ≈ ${lambda.toFixed(1)} m · c ≈ ${c.toFixed(2)} m/s · max slope ≈ ${(P.amp*k).toFixed(3)}`;
+  // status strip
+  $('st-mode').textContent = P.mode==='manual'?'MANUAL':(P.mode==='speed'?'PID · SPEED':'PID · POSITION');
+  $('st-sea').textContent = P.sea==='regular'?'REGULAR':'JONSWAP';
+  $('st-fmax').textContent = P.fmax+' N';
+}
+
+// sea-state toggle
+$('seg-sea').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+  $('seg-sea').querySelectorAll('button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); P.sea=b.dataset.sea;
+  $('sea-regular').classList.toggle('hidden',P.sea!=='regular');
+  $('sea-irregular').classList.toggle('hidden',P.sea!=='irregular');
+  onParamChange();
+}));
+$('btn-reseed').addEventListener('click',()=>{P.seed=Math.floor(Math.random()*1e6)+1; buildIrregular();});
+
+// controller mode toggle
+$('seg-mode').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+  $('seg-mode').querySelectorAll('button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); P.mode=b.dataset.mode;
+  $('ctl-manual').classList.toggle('hidden',P.mode!=='manual');
+  $('ctl-speed').classList.toggle('hidden',P.mode!=='speed');
+  $('ctl-position').classList.toggle('hidden',P.mode!=='position');
+  $('pid-gains').classList.toggle('hidden',P.mode==='manual');
+  S.integ=0; S.prevErr=0; S.reached=false;
+  onParamChange();
+}));
+
+// toggles
+function bindToggle(id,key){
+  const el=$(id);
+  el.classList.toggle('on',P[key]);
+  el.addEventListener('click',()=>{P[key]=!P[key]; el.classList.toggle('on',P[key]);});
+}
+bindToggle('tg-morison','morison');
+bindToggle('tg-ff','ff');
+
+// transport
+$('btn-play').addEventListener('click',()=>{
+  S.running=!S.running;
+  $('btn-play').textContent=S.running?'❚❚ Pause':'▶ Run';
+  $('scope-tag').textContent=S.running?'◉ LIVE':'❚❚ PAUSED';
+  lastFrame=0;
+});
+$('btn-reset').addEventListener('click',resetSim);
+$('btn-slow').addEventListener('click',()=>setSpeed(P.timeScale/2));
+$('btn-fast').addEventListener('click',()=>setSpeed(P.timeScale*2));
+function setSpeed(v){P.timeScale=Math.max(0.25,Math.min(4,v)); $('sim-speed').textContent=P.timeScale.toFixed(2).replace(/0$/,'').replace(/\.$/,'');}
+
+function resetSim(){
+  S.t=0;S.x=0;S.v=0;S.thrust=0;S.integ=0;S.prevErr=0;
+  S.distance=0;S.effort=0;S.errSq=0;S.errN=0;S.crests=0;S.lastSlope=0;
+  S.reached=false;S.reachedT=0;S.camX=0;
+  for(const k in buf) buf[k].length=0;
+  $('sim-time').textContent='0.0';
+}
+
+/* ======================= PRESETS ======================= */
+const PRESETS={
+  harbor:{sea:'regular',amp:0.25,per:3.5,mass:250,fmax:400,drag:35,slew:2500,
+          mode:'speed',vref:2.5,kp:180,ki:35,kd:15,ff:false,morison:true},
+  chop:{sea:'irregular',hs:1.2,tp:6,mass:350,fmax:600,drag:45,slew:2000,
+        mode:'speed',vref:2.0,kp:260,ki:50,kd:30,ff:true,morison:true},
+  storm:{sea:'irregular',hs:3.2,tp:8,mass:600,fmax:1400,drag:70,slew:3000,
+         mode:'speed',vref:1.5,kp:420,ki:70,kd:60,ff:true,morison:true},
+  station:{sea:'irregular',hs:1.0,tp:5,mass:350,fmax:700,drag:45,slew:2500,
+           mode:'position',xref:40,kp:120,ki:8,kd:180,ff:true,morison:true}
+};
+document.querySelectorAll('.preset').forEach(b=>b.addEventListener('click',()=>{
+  const p=PRESETS[b.dataset.preset]; if(!p)return;
+  Object.assign(P,p);
+  syncAllControls(); resetSim();
+  if(!S.running){S.running=true;$('btn-play').textContent='❚❚ Pause';$('scope-tag').textContent='◉ LIVE';lastFrame=0;}
+}));
+
+function syncAllControls(){
+  // sliders
+  const map={amp:'v-amp',per:'v-per',hs:'v-hs',tp:'v-tp',mass:'v-mass',fmax:'v-fmax',
+    drag:'v-drag',slew:'v-slew',manual:'v-manual',vref:'v-vref',xref:'v-xref',kp:'v-kp',ki:'v-ki',kd:'v-kd'};
+  const dec={amp:2,per:1,hs:2,tp:1,vref:1};
+  for(const k in map){ const el=$(k); if(el){el.value=P[k];} 
+    const d=$(map[k]); if(d){ d.textContent = dec[k]!=null?P[k].toFixed(dec[k]):P[k]; } }
+  // sea seg
+  $('seg-sea').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.sea===P.sea));
+  $('sea-regular').classList.toggle('hidden',P.sea!=='regular');
+  $('sea-irregular').classList.toggle('hidden',P.sea!=='irregular');
+  // mode seg
+  $('seg-mode').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x.dataset.mode===P.mode));
+  $('ctl-manual').classList.toggle('hidden',P.mode!=='manual');
+  $('ctl-speed').classList.toggle('hidden',P.mode!=='speed');
+  $('ctl-position').classList.toggle('hidden',P.mode!=='position');
+  $('pid-gains').classList.toggle('hidden',P.mode==='manual');
+  // toggles
+  $('tg-morison').classList.toggle('on',P.morison);
+  $('tg-ff').classList.toggle('on',P.ff);
+  onParamChange();
+}
+
+/* ======================= INIT ======================= */
+function init(){
+  fitCanvas(scope); fitCanvas(tele);
+  buildIrregular(); onParamChange(); syncAllControls();
+  requestAnimationFrame(loop);
+}
+window.addEventListener('resize',()=>{fitCanvas(scope);fitCanvas(tele);});
+init();
+</script>
+</body>
+</html>
