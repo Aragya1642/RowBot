@@ -39,4 +39,36 @@ class WaveConfig:
     #   -1 -> following sea (waves overtake the vessel, the vessel gets a boost)
     heading: Literal[1, -1] = 1
 
+    def steepness(self) -> float:
+        if self.mode == "calm":
+            pass
+        elif self.mode == "regular":
+            pass
+
+
+# --------------------------------------------------------------------------
+# Vessels
+# --------------------------------------------------------------------------
+@dataclass
+class VesselConfig:
+    """
+    Vessel, Actuator, and Hydrodynamic Parameters
+    """
+    mass: float = 350.0             # [kg]
+    length: float = 2.6             # [m]
+    beam: float = 1.0               # [m]
+    block_coefficient: float = 0.7  # TODO: Claude says it's for draft estimation - I need to verify
+
+    # TODO: Surge
+
+    # TODO: Heave/Pitch
+
+    # Actuator
+    thrust_max: float = 500.0       # [N]
+    slew_rate: float = 2000.0       # [N/s]
+    # TODO: Depth of prop, diameter of prop, longitudinal pos. of prop
+
+
+
+
 
