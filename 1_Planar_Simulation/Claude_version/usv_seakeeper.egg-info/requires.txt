@@ -1,0 +1,6 @@
+numpy>=1.24
+matplotlib>=3.6
+
+[rl]
+gymnasium>=0.29
+stable-baselines3[extra]>=2.2

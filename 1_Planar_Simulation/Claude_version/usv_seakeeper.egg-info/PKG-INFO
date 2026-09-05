@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: usv-seakeeper
+Version: 0.1.0
+Summary: USV surge/heave/pitch simulator with a pluggable controller interface and Gymnasium environments
+Requires-Python: >=3.9
+Requires-Dist: numpy>=1.24
+Requires-Dist: matplotlib>=3.6
+Provides-Extra: rl
+Requires-Dist: gymnasium>=0.29; extra == "rl"
+Requires-Dist: stable-baselines3[extra]>=2.2; extra == "rl"

@@ -1,0 +1,5 @@
+numpy>=1.24
+matplotlib>=3.6
+# --- optional, for the RL environments and examples/03_train_rl.py ---
+# gymnasium>=0.29
+# stable-baselines3[extra]>=2.2
