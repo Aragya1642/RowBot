@@ -47,7 +47,7 @@ class WaveConfig:
 
 
 # --------------------------------------------------------------------------
-# Vessels
+# Vessel
 # --------------------------------------------------------------------------
 @dataclass
 class VesselConfig:
@@ -68,6 +68,26 @@ class VesselConfig:
     slew_rate: float = 2000.0       # [N/s]
     # TODO: Depth of prop, diameter of prop, longitudinal pos. of prop
 
+
+# --------------------------------------------------------------------------
+# Sensing
+# --------------------------------------------------------------------------
+@dataclass
+class SensorConfig:
+    speed_noise: float = 0.0        # [m/s] std
+    position_noise: float = 0.0     # [m] std
+    slope_noise: float = 0.0        # [-] std on measured wave slope
+    pitch_noise: float = 0.0        # [rad] std
+    latency_steps: int = 0          # control-step delay applied to observations
+    seed: Optional[int] = 1234
+
+
+# --------------------------------------------------------------------------
+# Simulation
+# --------------------------------------------------------------------------
+@dataclass
+class SimConfig:
+    dt: float = 0.05        # control/step interval [s] 20Hz
 
 
 
