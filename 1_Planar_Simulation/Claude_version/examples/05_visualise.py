@@ -97,9 +97,11 @@ def videos():
               f"action_rate={tr.metrics['action_rate_rms']:.3f}")
 
 
-def live():
+def live(fps: int = 20, speed: float = 1.0):
     import matplotlib
-    for backend in ("TkAgg", "QtAgg", "MacOSX"):
+    # QtAgg first: it handles blitting and the event loop noticeably better
+    # than TkAgg. pip install pyqt6 to get it.
+    for backend in ("QtAgg", "TkAgg", "MacOSX"):
         try:
             matplotlib.use(backend)
             break
@@ -107,17 +109,24 @@ def live():
             continue
     from usv_seakeeper.render import LiveViewer
     print(f"backend: {matplotlib.get_backend()}")
-    LiveViewer(preset="coastal_chop", target_speed=2.0).show()
+    if matplotlib.get_backend().lower().startswith("tk"):
+        print("  (TkAgg is the slow path -- 'pip install pyqt6' for QtAgg)")
+    print(f"  {fps} fps target, {speed:g}x real time; fps readout is top-right")
+    LiveViewer(preset="coastal_chop", target_speed=2.0, fps=fps,
+               speed=speed).show()
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="interactive viewer")
+    ap.add_argument("--fps", type=int, default=20)
+    ap.add_argument("--speed", type=float, default=1.0,
+                    help="wall-clock playback multiplier")
     ap.add_argument("--quick", action="store_true", help="stills only")
     args = ap.parse_args()
 
     if args.live:
-        live()
+        live(fps=args.fps, speed=args.speed)
         return
     import matplotlib
     matplotlib.use("Agg")

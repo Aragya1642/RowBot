@@ -15,6 +15,8 @@ re-simulation that might have drifted.
 """
 from __future__ import annotations
 
+import time
+from collections import deque
 from typing import Optional, Sequence
 
 import numpy as np
@@ -495,8 +497,9 @@ class _MiniScope:
 class LiveViewer:
     """Interactive scope with sliders -- the browser Control Bay, in Python.
 
-    Needs an interactive matplotlib backend (TkAgg, QtAgg, macosx). It will
+    Needs an interactive matplotlib backend (QtAgg, TkAgg, macosx). It will
     not work under Agg, so this is for your desktop, not a headless box.
+    QtAgg (``pip install pyqt6``) is noticeably smoother than TkAgg.
 
     >>> from usv_seakeeper.render import LiveViewer
     >>> LiveViewer(preset="coastal_chop").show()     # doctest: +SKIP
@@ -504,14 +507,30 @@ class LiveViewer:
     Sliders retune the live PID and rebuild the sea state in place; the
     physics keeps running, so you can watch the effect of a gain change on
     the same wave train.
+
+    Rendering notes
+    ---------------
+    This uses **blitting**: the static parts of the figure (axes frames,
+    grids, ticks, labels) are drawn once into a cached background, and each
+    frame only re-draws the ~13 artists that actually move. A full
+    ``canvas.draw()`` of this figure costs about 70 ms -- a 14 fps ceiling,
+    which also starves the GUI event loop and makes the sliders feel sticky.
+    Blitting brings it to roughly 4 ms, so the frame budget stops being the
+    constraint.
+
+    Blitting requires the axes to be static, so all limits are fixed rather
+    than autoscaled per frame. When a slider changes something that *must*
+    move a limit (max thrust, target speed, wave height), the background is
+    invalidated and recaptured on the next tick -- see ``_invalidate``.
     """
 
     def __init__(self, preset: str = "coastal_chop", target_speed: float = 2.0,
-                 seed: int = 0, figsize=(11.5, 9.0)):
+                 seed: int = 0, figsize=(11.5, 9.0), fps: int = 20,
+                 speed: float = 1.0):
         from matplotlib.widgets import Slider, Button, CheckButtons
         from .envs import SpeedHoldEnv
         from .config import SpeedTaskConfig, SimConfig
-        from .controllers import PIDSpeedController, PIDGains, ControlObs
+        from .controllers import PIDSpeedController, PIDGains
 
         self.env = SpeedHoldEnv(
             preset=preset,
@@ -522,10 +541,19 @@ class LiveViewer:
         self.ctrl = PIDSpeedController(PIDGains(260, 50, 30),
                                        slope_feedforward=True)
         self.running = True
-        self._hist = {k: [] for k in
+        self.fps = int(fps)
+        # Sim steps per drawn frame, chosen for real-time playback rather
+        # than hardcoded. `speed` is a wall-clock multiplier.
+        self.steps_per_frame = max(
+            1, int(round(speed / (self.fps * self.env.dt))))
+
+        self._hist = {k: deque(maxlen=4000) for k in
                       ("t", "x", "u", "z", "theta", "error", "thrust",
                        "thrust_delivered", "ventilation", "wave_slope",
                        "target")}
+        self._bg = None
+        self._dirty = True
+        self._frame_times = deque(maxlen=30)
 
         self.fig = plt.figure(figsize=figsize, facecolor=BG)
         gs = self.fig.add_gridspec(4, 2, width_ratios=[3.1, 1.0],
@@ -535,6 +563,12 @@ class LiveViewer:
                                    bottom=0.06)
         self.scope = _ViewerScope(self.fig, gs, self.env)
         self._build_controls(gs, Slider, Button, CheckButtons)
+        self.fig.canvas.mpl_connect("resize_event", lambda _e: self._invalidate())
+
+    # ------------------------------------------------------------------
+    def _invalidate(self) -> None:
+        """Mark the cached background stale; it is recaptured next tick."""
+        self._dirty = True
 
     def _build_controls(self, gs, Slider, Button, CheckButtons):
         panel = self.fig.add_subplot(gs[:, 1])
@@ -560,10 +594,10 @@ class LiveViewer:
             sl.on_changed(self._on_slider)
             self._sliders[label] = sl
 
-        ax_chk = self.fig.add_axes([0.79, 0.34, 0.17, 0.075],
-                                   facecolor=PANEL)
+        ax_chk = self.fig.add_axes([0.79, 0.34, 0.17, 0.075], facecolor=PANEL)
         self._chk = CheckButtons(ax_chk, ["slope FF", "ventilation"],
-                                 [self.ctrl.slope_ff, self.env.sim.cfg.ventilation])
+                                 [self.ctrl.slope_ff,
+                                  self.env.sim.cfg.ventilation])
         for lbl in self._chk.labels:
             lbl.set_color(TXT_DIM)
             lbl.set_fontsize(8)
@@ -571,10 +605,8 @@ class LiveViewer:
 
         ax_pause = self.fig.add_axes([0.79, 0.26, 0.080, 0.035])
         ax_reset = self.fig.add_axes([0.88, 0.26, 0.080, 0.035])
-        self._b_pause = Button(ax_pause, "Pause", color=PANEL,
-                               hovercolor=EDGE)
-        self._b_reset = Button(ax_reset, "Reset", color=PANEL,
-                               hovercolor=EDGE)
+        self._b_pause = Button(ax_pause, "Pause", color=PANEL, hovercolor=EDGE)
+        self._b_reset = Button(ax_reset, "Reset", color=PANEL, hovercolor=EDGE)
         for b in (self._b_pause, self._b_reset):
             b.label.set_color(TXT)
             b.label.set_fontsize(8)
@@ -584,12 +616,22 @@ class LiveViewer:
     # ------------------------------------------------------------------
     def _on_slider(self, _):
         s = self._sliders
-        self.env.sim.field.set_spectrum(hs=s["Hs [m]"].val, tp=s["Tp [s]"].val)
+        hs, tp = s["Hs [m]"].val, s["Tp [s]"].val
+        sea_changed = (abs(hs - self.env.sim.wave_cfg.hs) > 1e-9
+                       or abs(tp - self.env.sim.wave_cfg.tp) > 1e-9)
+        self.env.sim.field.set_spectrum(hs=hs, tp=tp)
+        fmax_changed = abs(s["Fmax [N]"].val - self.env.sim.vessel.thrust_max) > 1e-9
         self.env.sim.vessel.thrust_max = s["Fmax [N]"].val
+        vref_changed = abs(s["v_ref [m/s]"].val - self.env.target_speed) > 1e-9
         self.env.target_speed = s["v_ref [m/s]"].val
         self.ctrl.g.kp = s["Kp"].val
         self.ctrl.g.ki = s["Ki"].val
         self.ctrl.g.kd = s["Kd"].val
+        # Gain changes are pure data; these three move axis limits, so the
+        # cached background has to be rebuilt.
+        if sea_changed or fmax_changed or vref_changed:
+            self.scope.set_static_limits(self.env)
+            self._invalidate()
 
     def _on_check(self, label):
         if label == "slope FF":
@@ -600,96 +642,194 @@ class LiveViewer:
     def _toggle(self, _):
         self.running = not self.running
         self._b_pause.label.set_text("Run" if not self.running else "Pause")
+        self._invalidate()
 
     def _reset(self, _):
         self.env.reset(seed=int(np.random.randint(1 << 30)))
         self.ctrl.reset()
         for v in self._hist.values():
             v.clear()
+        self.scope.set_static_limits(self.env)
+        self._invalidate()
 
     # ------------------------------------------------------------------
-    def _step(self, _frame):
-        if self.running:
-            for _ in range(2):        # 2 sim steps per drawn frame
-                obs = self.env.control_obs()
-                a = self.ctrl(obs, self.env.dt)
-                self.env.step(a)
-                st = self.env.sim.state
-                h = self._hist
-                h["t"].append(st.t)
-                h["x"].append(st.x)
-                h["u"].append(st.u)
-                h["z"].append(st.z)
-                h["theta"].append(st.theta)
-                h["error"].append(self.env.target_speed - st.u)
-                h["thrust"].append(st.thrust_cmd)
-                h["thrust_delivered"].append(st.thrust_delivered)
-                h["ventilation"].append(st.ventilation)
-                h["wave_slope"].append(st.wave_slope)
-                h["target"].append(self.env.target_speed)
-                for v in h.values():
-                    if len(v) > 4000:
-                        del v[:1000]
-        self.scope.update(self.env, self._hist)
-        return []
+    def _advance(self) -> None:
+        for _ in range(self.steps_per_frame):
+            obs = self.env.control_obs()
+            a = self.ctrl(obs, self.env.dt)
+            self.env.step(a)
+            st = self.env.sim.state
+            h = self._hist
+            h["t"].append(st.t)
+            h["x"].append(st.x)
+            h["u"].append(st.u)
+            h["z"].append(st.z)
+            h["theta"].append(st.theta)
+            h["error"].append(self.env.target_speed - st.u)
+            h["thrust"].append(st.thrust_cmd)
+            h["thrust_delivered"].append(st.thrust_delivered)
+            h["ventilation"].append(st.ventilation)
+            h["wave_slope"].append(st.wave_slope)
+            h["target"].append(self.env.target_speed)
 
-    def show(self, fps: int = 20):
-        from matplotlib.animation import FuncAnimation
+    def _tick(self) -> None:
+        t0 = time.perf_counter()
+        if self.running:
+            self._advance()
+        self.scope.update(self.env, self._hist, np.mean(self._frame_times)
+                          if self._frame_times else 0.0)
+
+        canvas = self.fig.canvas
+        if self._dirty or self._bg is None:
+            # full draw to (re)build the static background, then cache it
+            canvas.draw()
+            self._bg = {ax: canvas.copy_from_bbox(ax.bbox)
+                        for ax in self.scope.blit_axes}
+            self._dirty = False
+        else:
+            try:
+                for ax, bg in self._bg.items():
+                    canvas.restore_region(bg)
+                for artist in self.scope.dynamic_artists:
+                    artist.axes.draw_artist(artist)
+                for ax in self._bg:
+                    canvas.blit(ax.bbox)
+                canvas.flush_events()
+            except Exception:
+                # some backends don't support region blitting; fall back
+                self._bg = None
+                canvas.draw_idle()
+        self._frame_times.append(time.perf_counter() - t0)
+
+    def show(self, fps: Optional[int] = None):
         if matplotlib.get_backend().lower() == "agg":
             raise RuntimeError(
                 "LiveViewer needs an interactive backend; Agg cannot show a "
-                "window. Try matplotlib.use('TkAgg') before importing "
-                "pyplot, or use animate_rollout() to write a video instead.")
-        self._anim = FuncAnimation(self.fig, self._step,
-                                   interval=1000.0 / fps, blit=False,
-                                   cache_frame_data=False)
+                "window. Try matplotlib.use('QtAgg') (pip install pyqt6) or "
+                "'TkAgg' before importing pyplot, or use animate_rollout() "
+                "to write a video instead.")
+        if fps is not None:
+            self.fps = int(fps)
+        self._timer = self.fig.canvas.new_timer(interval=int(1000 / self.fps))
+        self._timer.add_callback(self._tick)
+        self._timer.start()
         plt.show()
-        return self._anim
+        return self._timer
 
 
 class _ViewerScope:
-    """Scope + strips for :class:`LiveViewer`, driven by live history lists."""
+    """Scope + strips for :class:`LiveViewer`, driven by live history deques.
 
-    def __init__(self, fig, gs, env, span: float = 46.0, window: float = 20.0):
+    All dynamic artists are created with ``animated=True`` so they are
+    excluded from the cached background, and are exposed through
+    ``dynamic_artists`` for the blit loop. Axis limits are set once by
+    ``set_static_limits`` rather than per frame -- autoscaling would
+    invalidate the background on every tick and defeat the whole scheme.
+    """
+
+    def __init__(self, fig, gs, env, window: float = 20.0):
+        self.fig = fig
         self.window = window
         self.ax_scope = fig.add_subplot(gs[0, 0])
         self.ax_speed = fig.add_subplot(gs[1, 0])
         self.ax_thrust = fig.add_subplot(gs[2, 0])
         self.ax_vent = fig.add_subplot(gs[3, 0])
-        for ax in (self.ax_scope, self.ax_speed, self.ax_thrust, self.ax_vent):
+        self.blit_axes = (self.ax_scope, self.ax_speed, self.ax_thrust,
+                          self.ax_vent)
+        for ax in self.blit_axes:
             _dark(ax)
         self.ax_scope.grid(False)
         fig.suptitle("USV Sea-Keeper  |  live", color=TXT, fontsize=11, **MONO)
 
-        self._xs = np.linspace(-span * 0.4, span * 0.6, 300)
-        self._line, = self.ax_scope.plot([], [], color=CREST, lw=2.0, zorder=3)
+        # 220 rather than 300 surface samples: at 1:1 aspect over a ~25 m
+        # window that is still sub-decimetre resolution, and the polygon is
+        # redrawn every frame.
+        self._n_surf = 220
+        self._line, = self.ax_scope.plot([], [], color=CREST, lw=2.0,
+                                         zorder=3, animated=True)
         self._fill = Polygon(np.zeros((3, 2)), closed=True,
-                             facecolor="#0a3547", edgecolor="none", zorder=2)
+                             facecolor="#0a3547", edgecolor="none",
+                             zorder=2, animated=True)
         self.ax_scope.add_patch(self._fill)
         self.ax_scope.axhline(0.0, color=TXT_DIM, lw=0.8, ls=":", alpha=0.5)
         self._hull = Polygon(np.zeros((4, 2)), closed=True, facecolor=HULL,
-                             edgecolor=HULL_LINE, lw=1.4, zorder=6)
+                             edgecolor=HULL_LINE, lw=1.4, zorder=6,
+                             animated=True)
         self.ax_scope.add_patch(self._hull)
         self._arrow, = self.ax_scope.plot([], [], color=SIGNAL, lw=3.0,
-                                          zorder=6)
+                                          zorder=6, animated=True)
         self._prop, = self.ax_scope.plot([], [], "o", ms=6, color=WARN,
-                                         zorder=7, mec=BG, mew=0.8)
+                                         zorder=7, mec=BG, mew=0.8,
+                                         animated=True)
         self._hud = self.ax_scope.text(0.012, 0.96, "", va="top",
                                        transform=self.ax_scope.transAxes,
                                        color=TXT_DIM, fontsize=8.5,
-                                       linespacing=1.6, zorder=8, **MONO)
-        self._vref, = self.ax_speed.plot([], [], color=TARGET, lw=1.2, ls="--")
-        self._v, = self.ax_speed.plot([], [], color=SIGNAL, lw=1.8)
-        self._fc, = self.ax_thrust.plot([], [], color=WARN, lw=1.7)
-        self._fd, = self.ax_thrust.plot([], [], color="#d98cff", lw=1.1)
-        self._vent, = self.ax_vent.plot([], [], color="#a6e26a", lw=1.6)
+                                       linespacing=1.6, zorder=8,
+                                       animated=True, **MONO)
+        self._fps = self.ax_scope.text(0.988, 0.96, "", va="top", ha="right",
+                                       transform=self.ax_scope.transAxes,
+                                       color=TXT_DIM, fontsize=8, zorder=8,
+                                       animated=True, **MONO)
+
+        self._vref, = self.ax_speed.plot([], [], color=TARGET, lw=1.2,
+                                         ls="--", animated=True)
+        self._v, = self.ax_speed.plot([], [], color=SIGNAL, lw=1.8,
+                                      animated=True)
+        self._fc, = self.ax_thrust.plot([], [], color=WARN, lw=1.7,
+                                        animated=True)
+        self._fd, = self.ax_thrust.plot([], [], color="#d98cff", lw=1.1,
+                                        animated=True)
+        self._fmax_hi, = self.ax_thrust.plot([], [], color=DANGER, lw=0.8,
+                                             ls=":", animated=True)
+        self._fmax_lo, = self.ax_thrust.plot([], [], color=DANGER, lw=0.8,
+                                             ls=":", animated=True)
+        self._vent, = self.ax_vent.plot([], [], color="#a6e26a", lw=1.6,
+                                        animated=True)
+
+        self.dynamic_artists = (
+            self._fill, self._line, self._hull, self._arrow, self._prop,
+            self._hud, self._fps, self._vref, self._v, self._fc, self._fd,
+            self._fmax_hi, self._fmax_lo, self._vent)
+
         self.ax_speed.set_ylabel("speed [m/s]", fontsize=8.5)
         self.ax_thrust.set_ylabel("thrust [N]", fontsize=8.5)
         self.ax_vent.set_ylabel("immersion", fontsize=8.5)
-        self.ax_vent.set_xlabel("time [s]", fontsize=8.5)
+        self.ax_vent.set_xlabel("time in window [s]", fontsize=8.5)
+        for ax in (self.ax_speed, self.ax_thrust):
+            ax.tick_params(labelbottom=False)
+        self.set_static_limits(env)
+
+    # ------------------------------------------------------------------
+    def set_static_limits(self, env) -> None:
+        """Fix every axis limit. Called on init and whenever a slider moves
+        something that needs a different range."""
+        v = env.sim.vessel
+        # Strips use *relative* time within the window, so the x-axis never
+        # scrolls -- the data slides through a fixed frame instead.
+        for ax in (self.ax_speed, self.ax_thrust, self.ax_vent):
+            ax.set_xlim(0.0, self.window)
+        vref = getattr(env, "target_speed", 2.0)
+        self.ax_speed.set_ylim(min(-1.0, vref - 3.0), vref + 3.0)
+        fm = v.thrust_max * 1.18
+        self.ax_thrust.set_ylim(-fm, fm)
         self.ax_vent.set_ylim(-0.05, 1.08)
 
-    def update(self, env, h):
+        eta_ref = max(2.1 * float(np.sqrt(env.sim.field.m0())), 0.05)
+        box = self.ax_scope.get_position()
+        size = self.fig.get_size_inches()
+        aspect = (box.height * size[1]) / (box.width * size[0])
+        self._v_half = max(1.45 * eta_ref, 1.15 * v.length * aspect, 0.7)
+        self.span = 2.0 * self._v_half / aspect
+        self._xs = np.linspace(-self.span * 0.42, self.span * 0.58,
+                               self._n_surf)
+        self.ax_scope.set_xlim(self._xs[0], self._xs[-1])
+        self.ax_scope.set_ylim(-self._v_half, self._v_half)
+        self.ax_scope.set_ylabel("elevation [m]", fontsize=8.5)
+        self._fmax_hi.set_data([0.0, self.window], [v.thrust_max] * 2)
+        self._fmax_lo.set_data([0.0, self.window], [-v.thrust_max] * 2)
+
+    # ------------------------------------------------------------------
+    def update(self, env, h, frame_time: float = 0.0) -> None:
         if not h["t"]:
             return
         st = env.sim.state
@@ -697,6 +837,7 @@ class _ViewerScope:
         eta = np.asarray(env.sim.field.query(x + self._xs, t).eta)
         self._line.set_data(self._xs, eta)
         self._fill.set_xy(_surface_verts(self._xs, eta))
+
         v = env.sim.vessel
         L, H = v.length, max(v.length * 0.16, 0.22)
         body = np.array([[-0.5 * L, -0.18 * H], [0.42 * L, -0.18 * H],
@@ -712,32 +853,31 @@ class _ViewerScope:
         f = st.thrust_delivered
         self._arrow.set_data([pr[0], pr[0] + f * sc * c],
                              [pr[1], pr[1] + f * sc * s])
-        amp = float(np.max(np.abs(eta)))
-        half = max(1.6 * amp, 1.4 * L, 1.0)
-        self.ax_scope.set_xlim(self._xs[0], self._xs[-1])
-        self.ax_scope.set_ylim(-half, half)
+        self._arrow.set_color(
+            WARN if abs(st.thrust_cmd) >= v.thrust_max - 1.0 else SIGNAL)
+
         self._hud.set_text(
             f"t     {t:7.1f} s\nslope {st.wave_slope:+6.3f}\n"
             f"pitch {np.degrees(th):+6.1f} deg\nspeed {st.u:6.2f} m/s\n"
             f"immer {st.ventilation:6.2f}\nsat   {env.sim.saturation():6.2f}")
+        if frame_time > 0:
+            self._fps.set_text(f"{1.0 / frame_time:4.0f} fps  "
+                              f"{frame_time * 1e3:4.1f} ms/frame")
 
-        ta = np.asarray(h["t"])
-        m = ta >= t - self.window
-        tw = ta[m]
-        self._vref.set_data(tw, np.asarray(h["target"])[m])
-        self._v.set_data(tw, np.asarray(h["u"])[m])
-        self._fc.set_data(tw, np.asarray(h["thrust"])[m])
-        self._fd.set_data(tw, np.asarray(h["thrust_delivered"])[m])
-        self._vent.set_data(tw, np.asarray(h["ventilation"])[m])
+        # relative time inside a fixed window
+        ta = np.fromiter(h["t"], dtype=float, count=len(h["t"]))
         lo = max(0.0, t - self.window)
-        for ax in (self.ax_speed, self.ax_thrust, self.ax_vent):
-            ax.set_xlim(lo, max(lo + self.window, t))
-        seg = np.concatenate([np.asarray(h["u"])[m], np.asarray(h["target"])[m]])
-        pad = max(0.25, 0.12 * float(np.ptp(seg)))
-        self.ax_speed.set_ylim(float(seg.min()) - pad, float(seg.max()) + pad)
-        fm = v.thrust_max * 1.18
-        self.ax_thrust.set_ylim(-fm, fm)
+        m = ta >= lo
+        tw = ta[m] - lo
 
+        def series(key):
+            return np.fromiter(h[key], dtype=float, count=len(h[key]))[m]
+
+        self._vref.set_data(tw, series("target"))
+        self._v.set_data(tw, series("u"))
+        self._fc.set_data(tw, series("thrust"))
+        self._fd.set_data(tw, series("thrust_delivered"))
+        self._vent.set_data(tw, series("ventilation"))
 
 __all__ = ["SeaScope", "animate_rollout", "animate_comparison", "save_frame",
            "LiveViewer"]

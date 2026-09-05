@@ -375,6 +375,80 @@ def test_heading_convention():
           f"w_enc={enc(-1):.3f} vs w={w:.3f}")
 
 
+def test_live_viewer_blitting():
+    """The live viewer must blit, not full-draw, and invalidate correctly.
+
+    A full canvas.draw() of this figure costs ~70 ms, which both caps the
+    frame rate at ~14 fps and starves the GUI event loop so the sliders feel
+    sticky. Blitting is the difference between usable and not, so it gets a
+    regression test even though the window itself can't be tested headlessly.
+    """
+    import time
+    import matplotlib
+    matplotlib.use("Agg")
+    from usv_seakeeper.render import LiveViewer
+
+    lv = LiveViewer(preset="coastal_chop", seed=0, fps=20)
+    check("steps_per_frame gives real-time playback",
+          abs(lv.steps_per_frame * lv.env.dt * lv.fps - 1.0) < 0.3,
+          f"{lv.steps_per_frame} steps/frame -> "
+          f"{lv.steps_per_frame * lv.env.dt * lv.fps:.2f}x real time")
+
+    for _ in range(200):
+        lv._tick()
+    t0 = time.perf_counter()
+    for _ in range(60):
+        lv._tick()
+    ms = (time.perf_counter() - t0) / 60 * 1000
+    budget = 1000.0 / lv.fps
+    check("blitted frame fits the frame budget with headroom",
+          ms < 0.6 * budget,
+          f"{ms:.1f} ms/frame vs {budget:.0f} ms budget "
+          f"({1000/ms:.0f} fps ceiling)")
+
+    # gain changes are pure data; limit-moving sliders must invalidate
+    lv._dirty = False
+    lv._sliders["Kp"].set_val(700.0)
+    check("gain change does not invalidate the background", not lv._dirty)
+    for name, val in (("Fmax [N]", 1200.0), ("Hs [m]", 3.2),
+                      ("v_ref [m/s]", 3.5)):
+        lv._dirty = False
+        lv._sliders[name].set_val(val)
+        check(f"{name} change invalidates the background", lv._dirty)
+    lv._tick()
+
+    check("thrust limits follow Fmax",
+          abs(lv.scope.ax_thrust.get_ylim()[1] - 1200.0 * 1.18) < 1.0,
+          f"ylim {lv.scope.ax_thrust.get_ylim()}")
+
+    for _ in range(400):
+        lv._tick()
+    h = lv._hist
+    check("history stays bounded", all(len(v) <= 4000 for v in h.values()),
+          f"max len {max(len(v) for v in h.values())}")
+    check("all live history finite",
+          all(np.all(np.isfinite(np.fromiter(v, float, len(v))))
+              for v in h.values()))
+
+    lv._toggle(None)
+    lv._tick()
+    check("pause stops advancing time", not lv.running)
+    lv._toggle(None)
+    lv._reset(None)
+    lv._tick()
+    check("reset clears history and keeps running",
+          lv.running and len(lv._hist["t"]) <= lv.steps_per_frame,
+          f"{len(lv._hist['t'])} samples after reset")
+
+    try:
+        lv.show()
+    except RuntimeError as exc:
+        check("show() under Agg raises a helpful error",
+              "interactive backend" in str(exc))
+    else:
+        check("show() under Agg raises a helpful error", False, "no error")
+
+
 def test_config_guard():
     """A non-integer dt/dt_physics ratio must fail loudly."""
     try:
@@ -416,6 +490,7 @@ def main() -> bool:
         test_render_layer,
         test_reset_starts_on_the_surface,
         test_heading_convention,
+        test_live_viewer_blitting,
         test_config_guard,
         test_csv_export,
     ]

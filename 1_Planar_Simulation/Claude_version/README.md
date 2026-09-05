@@ -109,7 +109,25 @@ from usv_seakeeper.render import LiveViewer
 LiveViewer(preset="coastal_chop").show()    # sliders for Hs, Tp, Fmax, PID gains
 ```
 
+Or `python examples/05_visualise.py --live [--fps 20] [--speed 2]`.
+
 Needs an interactive matplotlib backend; it raises a clear error under Agg.
+**Install `pyqt6` and it will pick QtAgg**, which handles blitting and the event
+loop noticeably better than TkAgg.
+
+The viewer **blits**: the static parts of the figure (axes frames, grids, ticks)
+are cached once and each frame redraws only the 14 artists that move. A full
+`canvas.draw()` of this figure costs ~70 ms -- a 14 fps ceiling that also
+starves the GUI event loop and makes the sliders feel sticky. Blitting brings a
+frame to ~9 ms. The cost is that axis limits must be static, so they are fixed
+once and recaptured only when a slider moves one (max thrust, target speed, wave
+height); gain changes are pure data and don't touch the background. There is an
+fps/ms readout in the top-right corner.
+
+If you want a genuinely smooth scope, matplotlib is the wrong tool and
+`pyqtgraph` is the right one -- it does 60 fps on this kind of plot without
+tricks. That would be a rewrite of the viewer half of `render.py`, reusing the
+geometry code.
 
 ## Plugging in a controller
 
