@@ -15,8 +15,9 @@ import matplotlib.pyplot as plt
 # Boat Control parameters
 #######################################################
 FORWARD_TARGET_VELOCITY = 2 # m/s
-K_GAIN = 1
+K_GAIN = 20
 I_GAIN = 0.05
+D_GAIN = 0.05
 
 #######################################################
 # Environment Control Parameters
@@ -27,7 +28,7 @@ MAX_FORCE = 20.0                    # N
 FORCE_MODE = "deck"                 # "deck" or "horizontal"
 FORCE_ONLY_WHEN_GROUNDED = True
 # Waves
-WAVE_AMPLITUDE = 0.00               # m
+WAVE_AMPLITUDE = 0.15               # m
 WAVE_LENGTH = 3.0                   # m
 WAVE_SPEED = 1.5                    # m/s - positive = waves move toward the board
 # Episodes
@@ -47,8 +48,10 @@ SIN_PHASE_INDEX = 7
 COS_PHASE_INDEX = 8
 
 class Controller:
-    def __init__(self):
+    def __init__(self, env):
         self.integrated_error = 0
+        self.last_error = 0
+        self.dt = env.cfg.dt
 
     def bang_bang_control(self, obs):
         vx_velocity = obs[VX_INDEX]
@@ -68,11 +71,17 @@ class Controller:
         vx_velocity = obs[VX_INDEX]
         error = FORWARD_TARGET_VELOCITY - vx_velocity
         action = (K_GAIN*error) + (I_GAIN*self.integrated_error)
-        self.integrated_error += error
+        self.integrated_error += error * self.dt
         return action
 
     def p_i_d_control(self, obs):
-        pass
+        vx_velocity = obs[VX_INDEX]
+        error = FORWARD_TARGET_VELOCITY - vx_velocity
+        derivative = (error - self.last_error) / self.dt
+        action = (K_GAIN*error) + (I_GAIN*self.integrated_error) + (D_GAIN*derivative)
+        self.integrated_error += error * self.dt
+        self.last_error = error
+        return action
 
     def pitch_p_control(self, obs):
         pitch = obs[PITCH_INDEX]
@@ -131,11 +140,11 @@ config = SkateConfig(
 
 env = SkateWavesEnv(config=config, render_mode="human")
 obs, info = env.reset(seed=42)
-controller = Controller()
+controller = Controller(env)
 plotter = Plotter()
 
 for _ in range(3000):
-    action = controller.p_control(obs)
+    action = controller.p_i_d_control(obs)
     obs, reward, terminated, truncated, info = env.step(action)
     plotter.record(obs, info)
 
