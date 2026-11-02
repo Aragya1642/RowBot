@@ -1,0 +1,3 @@
+[submodule "3_LOTUSim"]
+	path = 3_LOTUSim
+	url = https://github.com/naval-group/LOTUSim.git
