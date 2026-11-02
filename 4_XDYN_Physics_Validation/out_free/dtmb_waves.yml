@@ -1,0 +1,127 @@
+# RowBOT physics smoke test: stock DTMB 5415 hull, no propulsion, sitting in head seas.
+# Template: run_smoke.sh fills in /home/nixos/LOTUSim/assets/models/dtmb_hull/meshes/dtmb.stl, @WAVES@ and waves.csv.
+#   @WAVES@ = regular head wave (T ~ 9.5 s, wavelength ~ hull length) or flat sea.
+# Hull, mass, added mass, damping and resistance are copied unchanged from
+# LOTUSim/assets/models/dtmb_hull/dtmb-xdyn.yml. Propellers removed so the hull
+# only responds to waves.
+
+rotations convention: [psi, theta', phi'']
+
+environmental constants:
+  g: { value: 9.81, unit: m/s^2 }
+  rho: { value: 1025, unit: kg/m^3 }
+  nu: { value: 1.18e-6, unit: m^2/s }
+
+environment models:
+  - model: no wind
+  # Regular head wave: omega0 = 0.66 rad/s (T = 9.52 s, wavelength ~141 m ~ hull length),
+  # Hs = 2 m, travelling toward -x (180 deg) so it meets the bow (hull points +x).
+  - model: waves
+    discretization:
+      n: 1
+      omega min: { value: 0.1, unit: rad/s }
+      omega max: { value: 6, unit: rad/s }
+      energy fraction: 0.999
+    spectra:
+      - model: airy
+        depth: { value: 100, unit: m }
+        seed of the random data generator: 0
+        stretching:
+          delta: 1
+          h: { unit: m, value: 0 }
+        directional spreading:
+          type: dirac
+          waves propagating to: { value: 180, unit: deg }
+        spectral density:
+          type: dirac
+          omega0: { value: 0.66, unit: rad/s }
+          Hs: { value: 2.0, unit: m }
+
+bodies:
+  - name: dtmb
+    mesh: /home/nixos/LOTUSim/assets/models/dtmb_hull/meshes/dtmb.stl
+
+    position of body frame relative to mesh:
+      frame: mesh
+      x: { value: 70.27, unit: m }
+      y: { value: 0, unit: m }
+      z: { value: -7.55, unit: m }
+      phi: { value: 0, unit: rad }
+      theta: { value: 0, unit: rad }
+      psi: { value: 0, unit: rad }
+
+    initial position of body frame relative to NED:
+      frame: NED
+      x: { value: 0, unit: m }
+      y: { value: 0, unit: m }
+      z: { value: 0, unit: m }
+      phi: { value: 0, unit: deg }
+      theta: { value: 0, unit: deg }
+      psi: { value: 0, unit: deg }
+
+    initial velocity of body frame relative to NED:
+      frame: body
+      u: { value: 0, unit: m/s }
+      v: { value: 0, unit: m/s }
+      w: { value: 0, unit: m/s }
+      p: { value: 0, unit: rad/s }
+      q: { value: 0, unit: rad/s }
+      r: { value: 0, unit: rad/s }
+
+    dynamics:
+      hydrodynamic forces calculation point in body frame:
+        x: { value: 0, unit: m }
+        y: { value: 0, unit: m }
+        z: { value: 3.45, unit: m }
+
+      centre of inertia:
+        frame: dtmb
+        x: { value: 0, unit: m }
+        y: { value: 0, unit: m }
+        z: { value: 0, unit: m }
+
+      rigid body inertia matrix at the center of buoyancy projected in the body frame:
+        frame: body
+        row 1: [8.569e6, 0, 0, 0, 0, 0]
+        row 2: [0, 8.569e6, 0, 0, 0, 0]
+        row 3: [0, 0, 8.569e6, 0, 0, 0]
+        row 4: [0, 0, 0, 4.271e8, 0, 0]
+        row 5: [0, 0, 0, 0, 1.080e10, 0]
+        row 6: [0, 0, 0, 0, 0, 1.080e10]
+
+      added mass matrix at the center of buoyancy projected in the body frame:
+        frame: body
+        row 1: [8.979E+04, 0.000E+00, -1.981E+05, 0.000E+00, -1.962E+07, 0.000E+00]
+        row 2: [0.000E+00, 2.172E+06, 0.000E+00, 1.135E+06, 0.000E+00, 2.523E+07]
+        row 3: [-1.981E+05, 0.000E+00, 9.680E+06, 0.000E+00, 6.716E+07, 0.000E+00]
+        row 4: [0.000E+00, 1.135E+06, 0.000E+00, 3.865E+07, 0.000E+00, -2.228E+08]
+        row 5: [-1.962E+07, 0.000E+00, 6.716E+07, 0.000E+00, 9.117E+09, 0.000E+00]
+        row 6: [0.000E+00, 2.523E+07, 0.000E+00, -2.228E+08, 0.000E+00, 3.338E+09]
+
+    external forces:
+      - model: gravity
+      - model: non-linear hydrostatic (fast)
+      - model: non-linear Froude-Krylov
+      - model: linear damping
+        damping matrix at the center of gravity projected in the body frame:
+          frame: dtmb
+          row 1: [1.0e5, 0, 0, 0, 0, 0]
+          row 2: [0, 1.0e5, 0, 0, 0, 0]
+          row 3: [0, 0, 8.86e6, 0, 0, 0]
+          row 4: [0, 0, 0, 3.18e7, 0, 0]
+          row 5: [0, 0, 0, 0, 1.01e10, 0]
+          row 6: [0, 0, 0, 0, 0, 1.0e5]
+      - model: quadratic damping
+        damping matrix at the center of gravity projected in the body frame:
+          frame: dtmb
+          row 1: [0, 0, 0, 0, 0, 0]
+          row 2: [0, 0, 0, 0, 0, 0]
+          row 3: [0, 0, 0, 0, 0, 0]
+          row 4: [0, 0, 0, 1.16e8, 0, 0]
+          row 5: [0, 0, 0, 0, 0, 0]
+          row 6: [0, 0, 0, 0, 0, 0]
+
+output:
+  - format: csv
+    filename: waves.csv
+    data: [t, x(dtmb), y(dtmb), z(dtmb), phi(dtmb), theta(dtmb), psi(dtmb), u(dtmb)]

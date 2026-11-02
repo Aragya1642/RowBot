@@ -1,0 +1,4 @@
+Using key 'rigid body inertia matrix at the center of buoyancy projected in the body frame' is not recommended, as it is considered as the matrix expressed at center of gravity.
+Please replace key 'rigid body inertia matrix at the center of buoyancy projected in the body frame' with key 'rigid body inertia matrix at the center of gravity and projected in the body frame'.
+Using key 'added mass matrix at the center of buoyancy projected in the body frame' is not recommended, as it is considered as the matrix expressed at center of gravity.
+Please replace key 'added mass matrix at the center of buoyancy projected in the body frame' with key 'added mass matrix at the center of gravity and projected in the body frame'.

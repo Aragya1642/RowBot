@@ -1,0 +1,22 @@
+  # Regular head wave: omega0 = 0.66 rad/s (T = 9.52 s, wavelength ~141 m ~ hull length),
+  # Hs = 2 m, travelling toward -x (180 deg) so it meets the bow (hull points +x).
+  - model: waves
+    discretization:
+      n: 1
+      omega min: { value: 0.1, unit: rad/s }
+      omega max: { value: 6, unit: rad/s }
+      energy fraction: 0.999
+    spectra:
+      - model: airy
+        depth: { value: 100, unit: m }
+        seed of the random data generator: 0
+        stretching:
+          delta: 1
+          h: { unit: m, value: 0 }
+        directional spreading:
+          type: dirac
+          waves propagating to: { value: 180, unit: deg }
+        spectral density:
+          type: dirac
+          omega0: { value: 0.66, unit: rad/s }
+          Hs: { value: 2.0, unit: m }
