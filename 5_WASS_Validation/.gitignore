@@ -1,0 +1,3 @@
+# Downloaded datasets are large; recreate them with download_data.py (see README.md).
+data/
+__pycache__/

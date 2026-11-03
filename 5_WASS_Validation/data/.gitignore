@@ -1,5 +1,0 @@
-# Downloaded datasets are large; keep only the README and download script in git.
-*
-!.gitignore
-!README.md
-!download_data.py

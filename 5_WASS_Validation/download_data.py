@@ -3,7 +3,7 @@
 
 Source: https://data-dataref.ifremer.fr/stereo/
 
-The local layout mirrors the server:
+The local layout mirrors the server (<out> defaults to the data/ folder next to this script):
     <out>/<campaign>/<acquisition>/{config,input,nc}/...
     <out>/<campaign>/<campaign>_Meteo/...      (extras)
     <out>/<campaign>/<campaign>_WaveGauge/...  (extras)
@@ -213,8 +213,8 @@ def main():
                    help="reference WASS surface NetCDF files to fetch (default none)")
     d.add_argument("--no-extras", dest="extras", action="store_false",
                    help="skip the small Meteo / WaveGauge .mat files")
-    d.add_argument("--out", type=Path, default=Path(__file__).resolve().parent,
-                   help="output directory (default: this script's folder)")
+    d.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "data",
+                   help="output directory (default: data/ next to this script)")
     d.add_argument("--workers", type=int, default=4, help="parallel downloads (default 4)")
     d.add_argument("--dry-run", action="store_true", help="show what would be downloaded and exit")
     d.add_argument("-y", "--yes", action="store_true", help="don't prompt for downloads over 50 GB")
