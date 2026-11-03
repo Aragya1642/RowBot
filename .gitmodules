@@ -1,3 +1,7 @@
 [submodule "3_LOTUSim"]
 	path = 3_LOTUSim
 	url = https://github.com/naval-group/LOTUSim.git
+[submodule "6_HoloOcean/HoloOcean"]
+	path = 6_HoloOcean/HoloOcean
+	url = https://github.com/byu-holoocean/HoloOcean.git
+	branch = develop
