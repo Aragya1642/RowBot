@@ -1,11 +1,16 @@
 import os
+from datetime import datetime
 import cv2
 import holoocean
 import numpy as np
 from pynput import keyboard
 
 DRONE_HEIGHT = 20.0   # meters
-OUT_DIR = "drone_frames"
+# Each run saves to 6_HoloOcean/data/<script>_<timestamp>/frames
+HOLOOCEAN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
+RUN_DIR = os.path.join(HOLOOCEAN_DIR, "data", f"{SCRIPT_NAME}_{datetime.now():%Y-%m-%d_%H-%M-%S}")
+OUT_DIR = os.path.join(RUN_DIR, "frames")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 cfg = {
