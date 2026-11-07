@@ -8,3 +8,6 @@
 [submodule "5_WASS_Validation/wassfast"]
 	path = 5_WASS_Validation/wassfast
 	url = https://gitlab.com/fibe/wassfast.git
+[submodule "5_WASS_Validation/wass"]
+	path = 5_WASS_Validation/wass
+	url = https://github.com/fbergama/wass.git
