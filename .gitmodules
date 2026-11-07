@@ -5,3 +5,6 @@
 	path = 6_HoloOcean/HoloOcean
 	url = https://github.com/byu-holoocean/HoloOcean.git
 	branch = develop
+[submodule "5_WASS_Validation/wassfast"]
+	path = 5_WASS_Validation/wassfast
+	url = https://gitlab.com/fibe/wassfast.git
