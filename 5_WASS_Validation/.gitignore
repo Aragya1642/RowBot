@@ -1,3 +1,6 @@
 # Downloaded datasets are large; recreate them with download_data.py (see README.md).
 data/
 __pycache__/
+# Local WASS build (./build_wass.sh) and the nix GC root that protects its dependencies
+wass_bin/
+.nix-gcroot-wass

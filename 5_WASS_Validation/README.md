@@ -14,6 +14,8 @@ Other Ifremer data is at https://data-dataref.ifremer.fr/, but it may be less re
 | [`download_data.py`](download_data.py) | Download Ifremer campaigns, frames and reference reconstructions into `data/` |
 | [`view_stereo.py`](view_stereo.py) | Play stereo pairs side by side, optionally with Ifremer's reconstructed surface overlaid |
 | [`view_nc.py`](view_nc.py) | Animate a gridded surface NetCDF from above (for data without images, e.g. Agulhas II) |
+| [`shell.nix`](shell.nix), [`build_wass.sh`](build_wass.sh) | NixOS environment for WASS, and the script that builds it. See [Running WASS](#running-wass) |
+| `wass/`, `wassfast/` | Git submodules: [WASS](https://github.com/fbergama/wass) and [WASSfast](https://gitlab.com/fibe/wassfast) source |
 | `data/` | Downloaded datasets only. **Not in git** (see `.gitignore`); recreate as described below |
 
 ```
@@ -22,6 +24,11 @@ Other Ifremer data is at https://data-dataref.ifremer.fr/, but it may be less re
 ├── download_data.py
 ├── view_stereo.py
 ├── view_nc.py
+├── shell.nix                     ← nix-shell: WASS tools + Python deps
+├── build_wass.sh                 ← builds wass/ into wass_bin/
+├── wass/                         ← submodule (WASS source)
+├── wassfast/                     ← submodule (WASSfast source, not set up yet)
+├── wass_bin/                     ← git-ignored, created by build_wass.sh
 └── data/                         ← git-ignored
     ├── <campaign>/               ← Ifremer, from download_data.py
     │   ├── <acquisition>/{config,input,nc}/
@@ -57,7 +64,65 @@ The first run downloads the packages (~100 MB). Later runs start in a few second
 pip install opencv-python numpy pygame-ce netCDF4
 ```
 
-The examples below use plain `python3 ...`. On NixOS, use `py download_data.py ...` and `pyv "python3 view_stereo.py ..."`.
+The examples below use plain `python3 ...`. On NixOS, use `py download_data.py ...` and `pyv "python3 view_stereo.py ..."`,
+or run them inside `nix-shell` (see [Running WASS](#running-wass)), which provides the same Python packages.
+
+## Running WASS
+
+WASS and WASSfast are included as git submodules. After cloning RowBot, fetch them with
+`git submodule update --init --recursive` (or clone with `--recurse-submodules`). `--recursive` is needed for WASS's own `ext/incfg` submodule.
+
+### NixOS setup
+
+The official [install page](https://sites.google.com/unive.it/wass/software/wass/installing) is outdated: it targets Ubuntu 16.04, `apt-get`,
+OpenCV 3.x and a `Docker/` folder the repo no longer has. The current code builds against nixpkgs instead:
+
+```bash
+cd 5_WASS_Validation
+./build_wass.sh   # once, outside nix-shell: compiles wass/src into wass_bin/ (a few minutes; first run also fetches PyTorch)
+nix-shell         # every time you want to use WASS
+```
+
+Inside `nix-shell` you get:
+- **The C++ pipeline** on PATH: `wass_prepare`, `wass_match`, `wass_autocalibrate`, `wass_stereo`
+- **`wasscli`**: interactive runner for the whole pipeline
+- **`wassgridsurface`**: grids the point clouds into a NetCDF file
+- **`python3`** with numpy, netCDF4, OpenCV and pygame, so `view_stereo.py` / `view_nc.py` also run here
+
+Notes on the setup:
+- **`wasscli` and `wassgridsurface` are built from the submodule's own source** (`wass/cli`, `wass/gridding`) with nixpkgs dependencies, not pip.
+- **Boost:** it uses **`boost187`**. nixpkgs' default Boost (1.89) dropped the `boost_system` library WASS's CMake requires.
+- **The first build downloads SBA** (sparse bundle adjustment) from `dais.unive.it` and compiles it into `wass/ext/sba-1.6/`, which WASS's git ignores.
+- **Don't run `wass/build.sh`.** It deletes `wass/ext/`, which contains the `incfg` submodule.
+- **`build_wass.sh` creates a nix GC root** (`.nix-gcroot-wass`), so `nix-collect-garbage` won't delete libraries the executables link against.
+  Re-run `./build_wass.sh` after updating the `wass` submodule.
+- **WASSfast is not set up yet.** It uses its own conda environments; see `wassfast/README.md`.
+
+### Using the pipeline
+
+`wasscli` runs in a sequence folder laid out like this (from WASS's [mini tutorial](wassfast/doc/wass_wassfast_mini_tutorial.md)):
+
+```
+my_sequence/
+├── config/      intrinsics_00/01.xml, distortion_00/01.xml, matcher_config.txt, stereo_config.txt
+├── input/
+│   ├── cam0/    000000_..._01.tif, ...
+│   └── cam1/    000000_..._02.tif, ...
+└── output/
+```
+
+```bash
+cd my_sequence
+wasscli          # menu: Prepare -> Match -> Autocalibrate -> Stereo
+```
+
+Then grid the point clouds into NetCDF with `wassgridsurface` (see the tutorial's "Configure for gridding" section).
+
+Ifremer acquisitions already ship a WASS `config/` folder. Their images are either flat in `input/` (BS, LJ) or in `input/cam1` + `input/cam2` (AA, YS),
+so they need rearranging into `input/cam0` + `input/cam1` first.
+
+**Status:** the build has been verified, and the tools start and report their version (`v. 1.26`, OpenCV 4.13). A full reconstruction has **not**
+been run on this machine yet.
 
 ## Quick start
 
