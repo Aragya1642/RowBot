@@ -11,3 +11,6 @@
 [submodule "5_WASS_Validation/wass"]
 	path = 5_WASS_Validation/wass
 	url = https://github.com/fbergama/wass.git
+[submodule "7_FoundationStereo/FoundationStereo"]
+	path = 7_FoundationStereo/FoundationStereo
+	url = https://github.com/NVlabs/FoundationStereo.git
