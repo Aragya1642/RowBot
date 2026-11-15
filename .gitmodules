@@ -14,3 +14,6 @@
 [submodule "7_FoundationStereo/FoundationStereo"]
 	path = 7_FoundationStereo/FoundationStereo
 	url = https://github.com/NVlabs/FoundationStereo.git
+[submodule "7_FoundationStereo/Fast-FoundationStereo"]
+	path = 7_FoundationStereo/Fast-FoundationStereo
+	url = https://github.com/NVlabs/Fast-FoundationStereo.git
