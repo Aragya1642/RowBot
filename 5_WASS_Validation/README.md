@@ -14,7 +14,10 @@ Other Ifremer data is at https://data-dataref.ifremer.fr/, but it may be less re
 | [`download_data.py`](download_data.py) | Download Ifremer campaigns, frames and reference reconstructions into `data/` |
 | [`view_stereo.py`](view_stereo.py) | Play stereo pairs side by side, optionally with Ifremer's reconstructed surface overlaid |
 | [`view_nc.py`](view_nc.py) | Animate a gridded surface NetCDF from above (for data without images, e.g. Agulhas II) |
-| [`shell.nix`](shell.nix), [`build_wass.sh`](build_wass.sh) | NixOS environment for WASS, and the script that builds it. See [Running WASS](#running-wass) |
+| [`run_wass.py`](run_wass.py) | Run the whole WASS pipeline (images → `gridded.nc` + videos) in one command and record processing times. See [One command](#one-command-run_wasspy) |
+| [`run_wassfast.py`](run_wassfast.py) | Run WASSfast on the same pairs and grid as a `run_wass.py` run, with the same kind of timings. See [WASSfast](#wassfast) |
+| [`compare_runs.py`](compare_runs.py) | WASS vs WASSfast: timing and accuracy figures, side-by-side videos, summary table. See [Comparing WASS and WASSfast](#comparing-wass-and-wassfast) |
+| [`shell.nix`](shell.nix), [`build_wass.sh`](build_wass.sh) | NixOS environment for WASS and WASSfast, and the script that builds WASS. See [Running WASS](#running-wass) |
 | `wass/`, `wassfast/` | Git submodules: [WASS](https://github.com/fbergama/wass) and [WASSfast](https://gitlab.com/fibe/wassfast) source |
 | `data/` | Downloaded datasets only. **Not in git** (see `.gitignore`); recreate as described below |
 
@@ -24,18 +27,23 @@ Other Ifremer data is at https://data-dataref.ifremer.fr/, but it may be less re
 ├── download_data.py
 ├── view_stereo.py
 ├── view_nc.py
-├── shell.nix                     ← nix-shell: WASS tools + Python deps
+├── run_wass.py                   ← images -> gridded.nc, with timings
+├── run_wassfast.py               ← same pairs + grid -> wassfast.nc, with timings
+├── compare_runs.py               ← WASS vs WASSfast figures, videos, summary
+├── shell.nix                     ← nix-shell: WASS tools, wassfast + Python deps
 ├── build_wass.sh                 ← builds wass/ into wass_bin/
 ├── wass/                         ← submodule (WASS source)
-├── wassfast/                     ← submodule (WASSfast source, not set up yet)
+├── wassfast/                     ← submodule (WASSfast source, run from source by shell.nix)
 ├── wass_bin/                     ← git-ignored, created by build_wass.sh
 └── data/                         ← git-ignored
     ├── <campaign>/               ← Ifremer, from download_data.py
     │   ├── <acquisition>/{config,input,nc}/
     │   ├── <campaign>_Meteo/
     │   └── <campaign>_WaveGauge/
-    └── SA_Agulhas_II_Winter_2017_Cruise__WASS/   ← manual download
-        └── wass__20170704_hhmm.nc  (x6)
+    ├── SA_Agulhas_II_Winter_2017_Cruise__WASS/   ← manual download
+    │   └── wass__20170704_hhmm.nc  (x6)
+    ├── wassfast_testdata/        ← official WASSfast test data (see WASSfast below)
+    └── compare/<dataset>/{wass,wassfast,report}/  ← comparison runs
 ```
 
 ## Setup
@@ -96,7 +104,7 @@ Notes on the setup:
 - **Don't run `wass/build.sh`.** It deletes `wass/ext/`, which contains the `incfg` submodule.
 - **`build_wass.sh` creates a nix GC root** (`.nix-gcroot-wass`), so `nix-collect-garbage` won't delete libraries the executables link against.
   Re-run `./build_wass.sh` after updating the `wass` submodule.
-- **WASSfast is not set up yet.** It uses its own conda environments; see `wassfast/README.md`.
+- **WASSfast** is also in this shell (`wassfast` command, CNN mode, CPU). See [WASSfast](#wassfast).
 
 ### Using the pipeline
 
@@ -119,10 +127,185 @@ wasscli          # menu: Prepare -> Match -> Autocalibrate -> Stereo
 Then grid the point clouds into NetCDF with `wassgridsurface` (see the tutorial's "Configure for gridding" section).
 
 Ifremer acquisitions already ship a WASS `config/` folder. Their images are either flat in `input/` (BS, LJ) or in `input/cam1` + `input/cam2` (AA, YS),
-so they need rearranging into `input/cam0` + `input/cam1` first.
+so they need rearranging into `input/cam0` + `input/cam1` first (`run_wass.py` accepts all three layouts as they are).
 
-**Status:** the build has been verified, and the tools start and report their version (`v. 1.26`, OpenCV 4.13). A full reconstruction has **not**
-been run on this machine yet.
+**WASS bug (v1.26, commit 66f43a2):** with `DENSE_SCALE=1.0` (the default) `wass_stereo` aborts on empty images. Put `DENSE_SCALE=0.9999`
+in `config/stereo_config.txt`. `run_wass.py` does this automatically.
+
+**Status:** the quickstart sequence has been reconstructed and gridded on this machine (via `wasscli` and via `run_wass.py`).
+
+### One command: run_wass.py
+
+Runs prepare → match → autocalibrate → stereo → grid → videos without prompts, then writes how long each step took.
+Run it inside `nix-shell`:
+
+```bash
+cd 5_WASS_Validation
+nix-shell
+python3 run_wass.py data/wass_quickstart/seq/input --baseline 3.0 --out data/wass_quickstart/run1
+```
+
+**Inputs**
+- `IMAGES`: a folder with `cam0/` + `cam1/`, `cam1/` + `cam2/` (Ifremer AA, YS), or flat `*_01.*` / `*_02.*` files (Ifremer BS, LJ).
+  Or give `--cam0 DIR --cam1 DIR`. Images are read in place, not copied.
+- `--calib DIR`: `intrinsics_00/01.xml` and `distortion_00/01.xml`, plus optionally `prepare/matcher/stereo_config.txt`
+  (generated with WASS defaults when missing). Default: `IMAGES/../config`.
+- `--baseline M`: camera baseline in metres (needed for the grid step). WASS reconstructs in baseline units, so this is what makes the output metric.
+- `--fps HZ`: frame rate. Taken from WASS-style names (`000001_0000000000199_01.jpg`, the middle part in ms) when omitted.
+
+**Outputs** in `--out`:
+
+| Path | What |
+|---|---|
+| `config/` | the calibration and config files used (with the `DENSE_SCALE` workaround applied) |
+| `output/NNNNNN_wd/` | per-frame WASS working folders (point cloud `mesh_cam.xyzC`, `plane.txt`, debug images); `planes.txt` |
+| `gridding/gridded.nc` | the gridded surface (WASS NetCDF format; view with `view_nc.py`). Also `area_grid.png` and `grid_projected_cam0.jpg` to check the grid area |
+| `gridding/reconstruction.mp4` | the reconstructed surface coloured by elevation over the undistorted cam0 image, next to cam1 and a top view (made with `view_stereo.py`) |
+| `gridding/gridded.mp4` | top-view animation of the surface (made with `view_nc.py`) |
+| `timings_summary.txt` | table of wall time and CPU time per step, median time per frame, and processing time per stereo pair |
+| `timings.json` | the same plus run settings, machine, WASS version, grid area, match frames, failed frames |
+| `timings_frames.csv` | one row per frame per step (`stage, frame, seconds, ok`) |
+| `timings.png` | plot: wall time per step, and time per frame for prepare / match / stereo (median dashed, failed frames as red x) |
+| `logs/` | output of every tool call, e.g. `logs/stereo/000012.log` |
+| `pairs.txt` | which image pair became which frame number |
+
+**Options**
+
+| Option | Default | |
+|---|---|---|
+| `--start N`, `--frames N` | 0, all | process only some pairs (at least 3) |
+| `--workers N` | half the CPUs | frames processed in parallel |
+| `--match-frames N`, `--seed N` | 50, 0 | how many (random) frames are used for extrinsic calibration, as in `wasscli` |
+| `--grid-center X Y`, `--grid-size S` | automatic | grid area in metres (sea-plane coordinates, as in `area_grid.png`) |
+| `--grid-n N` | 256 | grid points per side (even). Spacing = size / (N-1) |
+| `--no-video` | off | skip the two videos |
+| `--steps LIST` | all | e.g. `--steps grid` or `--steps video` to redo only those; the other steps' timings are kept |
+| `--plot-only` | off | only redraw `timings.png` from the timings files in `--out` |
+| `--overwrite` | off | delete `output/`, `gridding/` and `logs/` in `--out` before preparing again |
+
+Notes:
+- **Automatic grid area:** the largest square with points in 5 sample frames, shrunk by 5 % per side. Check `gridding/area_grid.png`; to change it, re-run
+  with `--steps grid --grid-center X Y --grid-size S`.
+- **Failed frames:** the tools are checked by their output files (`wass_prepare` exits 0 even when it fails). Frames whose stereo fails are renamed
+  `*_wd_failed` so the gridding skips them, and are listed in `timings.json`.
+- **Timing:** per-frame times are measured with `--workers` frames running at once, so they are longer than a single frame on its own. For
+  comparable numbers keep `--workers` the same. `processing` is the sum of the step wall times (without the video).
+  **CPU time** (user + system, of all the tool processes, via `getrusage`) is recorded per step too. It does not depend on `--workers`,
+  so it is the fairer number when comparing with WASSfast, which uses its own process pool.
+- **Test run** (6 quickstart frames, 8 workers on 16 CPUs): match about 106 s per frame, stereo about 55 s per frame, grid 32 s, about 3.3 min total.
+  Match is the slowest step, so `--match-frames` matters for run time. `gridded.nc` is large (about 140 MB for 6 frames at N=256) because WASS also stores the camera images in it.
+
+## WASSfast
+
+WASSfast reconstructs the sea surface from a sparse set of stereo matches and fills
+the grid with a CNN, instead of dense stereo plus gridding. It runs in the same `nix-shell` (CPU only, TensorFlow 2.21 + Keras 3), from
+the `wassfast/` submodule source.
+
+WASSfast does not calibrate anything itself. It needs a WASS run on the same camera setup for:
+- the intrinsics and distortion (`config/`), and
+- `gridding/config.mat` from `wassgridsurface --action setup` with **N = 256** (the CNN's grid size). This file holds the sea plane,
+  the extrinsics and the grid area, so WASS and WASSfast output land on exactly the same grid.
+
+So the workflow is: WASS once (on a short part of the record with `--frames N` is enough) to calibrate, then WASSfast for every record.
+
+```bash
+nix-shell
+# 1. WASS on the record (or just enough of it to calibrate); --grid-n 256 is the default
+python3 run_wass.py data/BS_2013/2013-09-22_13-00-01_10Hz/input --baseline 1.8723889 --fps 10 --out data/compare/bs2013_300/wass --no-video
+# 2. WASSfast on the same pairs and grid
+python3 run_wassfast.py --wass data/compare/bs2013_300/wass --out data/compare/bs2013_300/wassfast
+```
+
+`run_wassfast.py` reads the pairs, fps and grid from the WASS run folder, links the images into the folder layout WASSfast expects
+(`input/cam0`, `input/cam1`, WASS-style names), writes `settings.cfg` and runs
+`wassfast input config.mat calib settings.cfg AUTO CNN --batchsize 16 -r FPS --nographics`, timestamping its output.
+
+| Option | Default | |
+|---|---|---|
+| `--wass DIR` | required | the `run_wass.py` output folder |
+| `--out DIR` | `WASS/../wassfast` | output folder |
+| `--fps HZ` | from the WASS run | frame rate passed as `-r` |
+| `--direction` | `AUTO` | dominant wave direction (`AUTO`, `LRTB`, `RLTB`, ...) |
+| `--batchsize N` | 16 | frames per CNN batch |
+| `--frames N` | all | only the first N pairs |
+| `--settings FILE` | generated | your own `settings.cfg` |
+
+Outputs: `wassfast.nc` (same grid as `gridding/gridded.nc`), `wassfast.log`, `wassfast.html` (WASSfast's own sea-state report),
+`timings_summary.txt`, `timings.json` (start-up, reconstruct, time per batch, marginal time per pair, CPU time, peak memory) and `timings_frames.csv`.
+
+Things to know:
+- **Fixed cameras only.** WASSfast assumes the sea plane in `config.mat` holds for the whole record (guide §4.1). Ship-mounted
+  data (Agulhas II) or a moving RowBot platform needs WASS.
+- **CNN mode only.** The PU mode needs TensorFlow ≤ 1.14 and exits with newer versions.
+- **One run at a time.** WASSfast opens a status server on `127.0.0.1:18098`; a second run fails to bind it.
+- **Dropped frames.** When (frames − 1) is a multiple of the batch size, WASSfast silently drops a whole batch (15 frames).
+  `run_wassfast.py` leaves out the last pair in that case instead.
+- **`workdir` in `wassfast.nc` is wrong:** it holds the index within the batch (0–15, repeating). Use `count` for the frame number
+  (`compare_runs.py` does).
+- **Output is scaled per batch:** the CNN output is mapped to ±3σ of the batch's sparse input, so the highest crests and deepest
+  troughs get clipped.
+- **Start-up:** importing TensorFlow and loading the model takes about 8 s, and the first batch is slower because the 16 worker
+  processes start and each import TensorFlow. `marginal_seconds_per_pair` excludes this.
+- `-r` (frame rate) and the wave direction made no measurable difference on the quick-start data (`-r 5` vs `-r 15`, `AUTO` vs `RLTB`:
+  RMSE 0.168 / 0.167 / 0.168 m against WASS).
+
+## Comparing WASS and WASSfast
+
+```bash
+python3 compare_runs.py --wass data/compare/bs2013_300/wass --wassfast data/compare/bs2013_300/wassfast \
+    --out data/compare/bs2013_300/report --title "BS_2013 (Black Sea, 300 pairs @ 10 Hz)"
+```
+
+Options: `--also LABEL=DIR` (extra WASSfast runs, e.g. other settings, added to the accuracy table), `--zlim M` (colour scale),
+`--video-fps HZ`, `--no-video` (figures and tables only, a few seconds).
+
+| Output | What |
+|---|---|
+| `timing_overview.png` | wall time per stage for WASS from scratch, WASS with calibrated cameras, and WASSfast; per-pair wall and CPU time |
+| `timing_scaling.png` | projected processing time against record length, and against real time |
+| `accuracy_timeseries.png` | Hs (4·std) per frame for both, RMSE and correlation per frame, elevation at one grid point |
+| `accuracy_maps.png` | one frame from both, their difference, coverage, mean absolute difference over all frames, scatter |
+| `accuracy_summary.png` | one figure: top row is one frame (WASS map, WASSfast map, difference map, point-by-point scatter); below, full width with a shared time axis, Hs per frame and elevation at one grid point, with that frame marked |
+| `accuracy_spectrum.png` | wavenumber spectrum k·S(k) of both, and a point-by-point scatter over all frames |
+| `wass.mp4`, `wassfast.mp4` | each surface over the undistorted cam0 image plus a top view, same layout and colour scale (real-time speed) |
+| `comparison.mp4` | both side by side plus the difference map |
+| `comparison_summary.md`, `comparison.json` | the numbers |
+
+How it compares:
+- **Timing.** "WASS from scratch" = prepare + match + autocalibrate + stereo + grid. "WASS, cameras already calibrated" leaves out
+  match, autocalibrate and grid setup (needed once per camera installation). WASSfast = start-up + reconstruct (its HTML report is
+  not counted). Both wall time and CPU time (all processes) are shown, since WASS runs 8 frames in parallel and WASSfast uses its own pool.
+- **Accuracy.** WASS is the reference. Both are on the same grid; only points where both have data are compared. RMSE, correlation
+  and Hs are per frame (median over frames). The spectrum uses the largest square where both have data in ≥ 98 % of frames.
+- **Videos.** Both surfaces are projected into cam0 with WASS's own `Cam0toGrid` and intrinsics, so the picture is identical apart from the surface.
+
+### Results on this machine
+
+16 CPUs (WSL2), no GPU. WASS with 8 workers. Reports in `data/compare/<dataset>/report/`.
+
+| | quick-start data | BS_2013 (2013-09-22 13:00) |
+|---|---:|---:|
+| pairs / frame rate | 50 @ 5 Hz (10 s) | 300 @ 10 Hz (30 s) |
+| grid | 90 m square, 0.35 m spacing | 33.5 m square, 0.13 m spacing (automatic) |
+| WASS from scratch | 35.8 min | 100.2 min |
+| WASS, calibrated cameras | 19.1 min (22.9 s / pair) | 86.9 min (17.4 s / pair) |
+| **WASSfast** | **59 s (1.2 s / pair)** | **3.2 min (0.6 s / pair)** |
+| speed-up vs calibrated WASS: wall / CPU | 20× / 15× | 27× / 17× |
+| WASSfast vs real time | 5.9× slower | 6.3× slower |
+| correlation (median per frame) | 0.92 | 0.84 |
+| RMSE | 0.17 m (11 % of Hs) | 0.096 m (15 % of Hs) |
+| Hs WASSfast / WASS | 0.93 | 1.11 |
+| after 1 m smoothing of both: correlation / RMSE / Hs ratio | 0.95 / 0.12 m / 0.96 | 0.96 / 0.046 m / 1.05 |
+
+What this says:
+- **WASSfast is 20–30× faster** in wall time and 15–17× in CPU time. On CPU it is still about 6× slower than real time; a GPU is the next step for real time.
+- **WASS time goes to stereo and gridding**, not matching, once the record is longer than a few dozen frames. Calibration (match) is a one-off cost.
+- **WASSfast gets the wave field right at scales above about 1–7 m and is noisier or smoother below that.** On the coarse quick-start
+  grid it smooths out short waves and under-estimates Hs by 7 %. On the fine BS_2013 grid it adds speckle and blob artefacts
+  (most at the far, left corner of the grid), seen as a flat noise floor in the spectrum, so its Hs is 11 % too high.
+  Smoothing both surfaces by 1 m removes most of the difference (correlation 0.95–0.96).
+- For wave statistics at metre scales and above, WASSfast is close to WASS at a fraction of the cost. For short-wave detail or exact
+  crest heights, use WASS.
 
 ## Quick start
 
@@ -353,7 +536,8 @@ On NixOS: `pyv "python3 view_nc.py ..."`, with the `pyv` alias from [Setup](#set
 # view_stereo.py
 
 Plays a folder of stereo image pairs as a video, with the left and right cameras side by side.
-It can open a live window or write an mp4. Optionally, it overlays a reconstructed sea surface (`.nc`) on the right camera image.
+It can open a live window or write an mp4. Optionally, it overlays a reconstructed sea surface (`.nc`) on one camera image:
+the right image for Ifremer full files, the left (cam0) image for WASS `gridded.nc` files (from `wassgridsurface` / `run_wass.py`).
 
 ```
 ┌──────────────┬──────────────────────┬──────────────┐
@@ -452,6 +636,20 @@ Things to note:
   `... has no iR, jR; overlay needs a full (not _short) file.` AA_2014, AA_2015 and YS_2017 have only full files anyway.
 - The grid covers a fixed patch of sea (19 × 19 m at 0.1 m spacing for BS_2013). The rest of the image is left as is.
 - Grid points with no data (`NaN`) are left uncoloured, and they show as grey in the top view.
+
+### WASS gridded.nc (your own reconstructions)
+
+`gridded.nc` from `wassgridsurface` (or `run_wass.py`) has no `iR`/`jR`. Instead it stores the camera matrices
+(`meta/Cam0toGrid`, `meta/intr0`), and the script projects every grid point (X, Y, Z) into **cam0** itself. Differences from Ifremer files:
+- The overlay goes on the **left** image (cam0, the camera WASS grids for).
+- The pixels are those of the **undistorted** image, so show the images WASS wrote in each frame folder rather than the raw input:
+  ```bash
+  python3 view_stereo.py data/wass_quickstart/run1 --topview --nc data/wass_quickstart/run1/gridding/gridded.nc \
+      --left 'output/*_wd/undistorted/00000000.png' --right 'output/*_wd/undistorted/00000001.png'
+  ```
+  Frame labels show the `NNNNNN_wd` folder. `run_wass.py` writes this video as `gridding/reconstruction.mp4`.
+- Units are taken from the file (Z and X/Y are in mm there) and shown in metres.
+- WASS interpolates the whole grid, so there are no `NaN` holes; keep the grid inside the area covered by points (`area_grid.png`).
 
 ### Frame matching
 

@@ -35,14 +35,33 @@ let
     ps.netcdf4
     ps.opencv4
     ps.pygame-ce # view_stereo.py / view_nc.py live window
+    # WASSfast (CNN mode), run from the wassfast/ submodule source (see `wassfast` below).
+    # Its pyproject.toml only packages the top-level module (no cnn/, cvproc/ or model weights), so it isn't pip-built.
+    ps.tensorflow-bin # prebuilt TF 2.21 wheel; wassfast pins 2.20
+    ps.keras # tensorflow.keras is Keras 3; tensorflow-bin doesn't pull it in
+    ps.scipy
+    ps.matplotlib
+    ps.tqdm
+    ps.mako
+    ps.h5py
+    ps.python-dateutil
+    ps.protobuf
+    ps.psutil # run_wassfast.py: CPU time / peak memory
   ]);
+
+  # `wassfast` command: the submodule's own code, so its relative model-weight paths resolve.
+  wassfast = pkgs.writeShellScriptBin "wassfast" ''
+    export PYTHONPATH="${toString ./wassfast}''${PYTHONPATH:+:$PYTHONPATH}"
+    exec ${python}/bin/python3 -m wassfast "$@"
+  '';
 in
 pkgs.mkShell {
-  packages = [ python ] ++ (with pkgs; [ cmake gnumake gcc pkg-config opencv4 boost187 lapack blas ]);
+  packages = [ python wassfast ] ++ (with pkgs; [ cmake gnumake gcc pkg-config opencv4 boost187 lapack blas ffmpeg ]);
 
   shellHook = ''
     export WASS_VALIDATION_DIR="${toString ./.}"
     export PATH="$WASS_VALIDATION_DIR/wass_bin/bin:$PATH"
+    export TF_CPP_MIN_LOG_LEVEL=1 # hide TensorFlow's INFO spam
     if [ ! -x "$WASS_VALIDATION_DIR/wass_bin/bin/wass_stereo" ]; then
       echo "WASS executables not built yet: run ./build_wass.sh (outside this shell)."
     fi

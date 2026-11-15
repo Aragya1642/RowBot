@@ -10,11 +10,15 @@ For anything else (e.g. WASS output), give explicit glob patterns for each camer
 The two lists are sorted and paired in order:
     python3 view_stereo.py OUT --left '*_wd/undistorted/00000000.png' --right '*_wd/undistorted/00000001.png'
 
-Reconstruction overlay (--nc): colours the right image by the surface elevation Z from an
-Ifremer *full* NetCDF file, using its iR/jR variables (right-camera pixel of each grid point).
-`_short` files lack iR/jR and cannot be overlaid. NetCDF time step t is matched to the t-th
-image pair found in FOLDER (+ --nc-offset), so point FOLDER at a single acquisition.
-The NetCDF can be a local path or an https:// URL (only the frames shown are fetched).
+Reconstruction overlay (--nc): colours one image by the surface elevation Z from a NetCDF file:
+  - Ifremer *full* files: drawn on the right image, using its iR/jR variables (right-camera pixel
+    of each grid point). `_short` files lack iR/jR and cannot be overlaid.
+  - WASS gridded.nc (wassgridsurface / run_wass.py): drawn on the left (cam0) image, projecting
+    the grid with the camera matrices stored in the file. These are pixels of the *undistorted*
+    image, so show WASS's undistorted images (see the last example).
+NetCDF time step t is matched to the t-th image pair found in FOLDER (+ --nc-offset), so point
+FOLDER at a single acquisition. The NetCDF can be a local path or an https:// URL (only the frames
+shown are fetched).
 
 Controls: space = pause, left/right = step (while paused), up/down = faster/slower, q / Esc = quit.
 
@@ -24,6 +28,8 @@ Examples:
     python3 view_stereo.py data/BS_2013/2013-09-22_13-00-01_10Hz --save bs2013.mp4
     python3 view_stereo.py data/BS_2013/2013-09-22_13-00-01_10Hz --topview \\
         --nc https://data-dataref.ifremer.fr/stereo/BS_2013/2013-09-22_13-00-01_10Hz/nc/Surfaces_20130922_130001.nc
+    python3 view_stereo.py data/wass_quickstart/run1 --topview --nc data/wass_quickstart/run1/gridding/gridded.nc \\
+        --left 'output/*_wd/undistorted/00000000.png' --right 'output/*_wd/undistorted/00000001.png'
 """
 
 import argparse
@@ -51,8 +57,10 @@ def find_pairs(folder, left_glob=None, right_glob=None):
         if len(lefts) != len(rights):
             print(f"warning: {len(lefts)} left vs {len(rights)} right images; "
                   f"using the first {min(len(lefts), len(rights))}", file=sys.stderr)
-        return [(left.parent.relative_to(folder).as_posix() or left.stem, left, right)
-                for left, right in zip(lefts, rights)]
+        def label(path):  # the WASS frame folder (NNNNNN_wd) if there is one, else the relative folder
+            wd = [part for part in path.relative_to(folder).parts if part.endswith("_wd")]
+            return wd[-1] if wd else (path.parent.relative_to(folder).as_posix() or path.stem)
+        return [(label(left), left, right) for left, right in zip(lefts, rights)]
 
     # Key by (sequence folder, frame index) so several acquisitions under FOLDER don't collide.
     # Images in input/cam1 + input/cam2 belong to the same sequence (input/).
@@ -69,21 +77,46 @@ def find_pairs(folder, left_glob=None, right_glob=None):
     return pairs
 
 
+UNIT_SCALE = {"mm": 1e-3, "millimeter": 1e-3, "millimeters": 1e-3, "cm": 1e-2, "m": 1.0, "meter": 1.0, "meters": 1.0}
+
+
+def to_m(var):
+    """Factor converting a NetCDF variable to metres, from its units attribute (default m)."""
+    return UNIT_SCALE.get(str(getattr(var, "units", "m")).strip().lower(), 1.0)
+
+
 class NcSurface:
-    """Per-frame access to an Ifremer WASS NetCDF file (Z, iR, jR)."""
+    """Per-frame access to a reconstruction NetCDF: Z (m) and the image pixel (iR, jR) of each grid point.
+
+    Ifremer full files store iR/jR (right camera). WASS gridded.nc files store the camera matrices
+    instead, from which iR/jR are computed for cam0 (left, undistorted image).
+    """
 
     def __init__(self, src, offset=0, zlim=None):
         import netCDF4  # only needed for --nc
 
         if src.startswith(("http://", "https://")) and "#" not in src:
             src += "#mode=bytes"  # HTTP byte-range access: fetch only what is read
-        self.ds = netCDF4.Dataset(src)
-        missing = {"Z", "iR", "jR"} - set(self.ds.variables)
-        if missing:
-            sys.exit(f"{src} has no {', '.join(sorted(missing))}; overlay needs a full (not _short) file.")
-        self.n = len(self.ds["time"])
+        self.ds = ds = netCDF4.Dataset(src)
+        meta = ds.groups.get("meta")
+        if "Z" in ds.variables and {"iR", "jR"} <= set(ds.variables):
+            self.kind, self.cam = "ifremer", 1
+            xname, yname = "X", "Y"
+        elif "Z" in ds.variables and meta is not None and {"Cam0toGrid", "intr0"} <= set(meta.variables):
+            self.kind, self.cam = "wass", 0
+            xname, yname = "X_grid", "Y_grid"
+            # Grid (m, z up) -> cam0 coordinates -> pixels of the undistorted cam0 image.
+            self.grid_to_cam0 = np.linalg.inv(np.asarray(meta["Cam0toGrid"][:], float))
+            self.K0 = np.asarray(meta["intr0"][:], float)
+            self.X = np.asarray(ds[xname][:], float) * to_m(ds[xname])
+            self.Y = np.asarray(ds[yname][:], float) * to_m(ds[yname])
+        else:
+            sys.exit(f"{src}: overlay needs Z plus iR/jR (Ifremer full file) or meta/Cam0toGrid (WASS gridded.nc); "
+                     f"Ifremer _short files cannot be overlaid.")
+        self.zscale = to_m(ds["Z"])
+        self.n = ds["Z"].shape[0]
         self.offset = offset
-        self.extent = (float(np.ptp(self.ds["X"][:])), float(np.ptp(self.ds["Y"][:])))
+        self.extent = tuple(float(np.ptp(np.asarray(ds[v][:], float) * to_m(ds[v]))) for v in (xname, yname))
         self.block, self._cache = 16, {}
 
         Z, iR, jR = self.frame_at(0)
@@ -105,8 +138,23 @@ class NcSurface:
         if b not in self._cache:
             sl = slice(b * self.block, min((b + 1) * self.block, self.n))
             get = lambda v: np.ma.filled(self.ds[v][sl].astype(np.float32), np.nan)
-            self._cache = {b: (get("Z"), get("iR"), get("jR"))}  # keep only the current block
+            Z = get("Z") * self.zscale
+            if self.kind == "ifremer":
+                self._cache = {b: (Z, get("iR"), get("jR"))}  # keep only the current block
+            else:
+                self._cache = {b: (Z, *zip(*(self.project(z) for z in Z)))}
         return tuple(a[t - b * self.block] for a in self._cache[b])
+
+    def project(self, Z):
+        """Pixel (iR, jR) in the undistorted cam0 image of each grid point (X, Y, Z), WASS files."""
+        pts = np.stack([self.X, self.Y, np.nan_to_num(Z), np.ones_like(Z)]).reshape(4, -1)
+        cam = (self.grid_to_cam0 @ pts)[:3]
+        px = self.K0 @ cam
+        with np.errstate(divide="ignore", invalid="ignore"):
+            iR, jR = (px[:2] / px[2]).reshape(2, *Z.shape)
+        behind = (cam[2] <= 0).reshape(Z.shape) | ~np.isfinite(Z)
+        iR[behind] = jR[behind] = np.nan
+        return iR.astype(np.float32), jR.astype(np.float32)
 
     def frame(self, pos):
         """Surface for image pair number `pos`, or None if out of range."""
@@ -194,7 +242,7 @@ def render(item, args, nc=None, info=""):
     for k, (img, name) in enumerate(zip(imgs, ("left (01)", "right (02)"))):
         scale = tile_w / img.shape[1]
         tile = cv2.resize(img, (tile_w, round(img.shape[0] * scale)), interpolation=cv2.INTER_AREA)
-        if k == 1 and surface:
+        if surface and k == nc.cam:
             draw_overlay(tile, *surface[1:], scale, nc.zlim, args.alpha)
             draw_colorbar(tile, nc.zlim)
         cv2.putText(tile, name, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
@@ -287,7 +335,8 @@ def main():
     parser.add_argument("--loop", action="store_true", help="loop playback")
     parser.add_argument("--save", type=Path, metavar="FILE.mp4", help="write an mp4 instead of opening a window")
     ov = parser.add_argument_group("reconstruction overlay")
-    ov.add_argument("--nc", metavar="FILE|URL", help="Ifremer full .nc file to overlay on the right image")
+    ov.add_argument("--nc", metavar="FILE|URL",
+                    help="Ifremer full .nc (overlaid on the right image) or WASS gridded.nc (on the left, undistorted image)")
     ov.add_argument("--nc-offset", type=int, default=0,
                     help="NetCDF time step = image pair number + OFFSET (default 0)")
     ov.add_argument("--zlim", type=float, help="colour scale limit in m, +/-ZLIM (default: from first frame)")
