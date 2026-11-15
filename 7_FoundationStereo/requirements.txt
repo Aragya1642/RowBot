@@ -1,0 +1,27 @@
+# FoundationStereo inference dependencies (installed into .venv by shell.nix).
+# Trimmed from FoundationStereo/environment.yml to what the inference code imports.
+#
+# PyTorch 2.4.1 + CUDA 12.1: the version upstream tests, and its CUDA 12.1 build still
+# supports Pascal GPUs (GTX 1060, sm_61). Newer CUDA 12.8+ builds drop Pascal.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.4.1+cu121
+torchvision==0.19.1+cu121
+
+numpy<2
+scipy
+pandas
+trimesh          # imported by FoundationStereo/Utils.py
+joblib           # imported by FoundationStereo/Utils.py
+omegaconf
+timm
+einops
+huggingface-hub
+imageio
+pillow
+opencv-contrib-python-headless
+open3d
+matplotlib
+gdown            # model weights from Google Drive
+scikit-image
+pyyaml
+netCDF4
